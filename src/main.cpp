@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <ArduinoHA.h>
-#include <Adafruit_NeoPixel.h>
 #include <ETH.h>
 #include <Network.h>
 #include <config.h>
@@ -36,11 +35,6 @@ bool ethConnected = false;
 
 NetworkClient client;
 
-// Onboard WS2812 RGB LED of the Waveshare ESP32-S3-ETH
-// is connected to GPIO21. It must be kept completely separate
-// from the CC1101, which now uses GPIO1 as CS.
-Adafruit_NeoPixel statusLed(1, 21, NEO_GRB + NEO_KHZ800);
-
 byte mac[] = {
   0xA5, 0x5C, 0xDB, 0xDF, 0x7B, 0x37
 };
@@ -56,20 +50,20 @@ ShutterControl shutterControl;
 // HA Covers
 // ============================================================
 
-HACover coverBuero("buero_rollo", HACover::PositionFeature);
-HACover coverSchlafzimmer2("schlafzimmer2", HACover::PositionFeature);
-HACover coverSchlafzimmer("schlafzimmer", HACover::PositionFeature);
-HACover coverGaestezimmer2("gaestezimmer_rollo2", HACover::PositionFeature);
-HACover coverKueche1("kueche_rollo1", HACover::PositionFeature);
-HACover coverKueche2("kueche_rollo2", HACover::PositionFeature);
-HACover coverBad("bad_rollo", HACover::PositionFeature);
-HACover coverSchlafzimmerRollo1("schlafzimmer_rollo1", HACover::PositionFeature);
-HACover coverWz4("wz4", HACover::PositionFeature);
-HACover coverWohnzimmerTuer("wohnzimmer_rollo_tuer", HACover::PositionFeature);
-HACover coverWohnzimmer2("wohnzimmer_rollo2", HACover::PositionFeature);
-HACover coverWohnzimmer3("wohnzimmer_rollo3", HACover::PositionFeature);
-HACover coverSchlafzimmer1("schlafzimmer1", HACover::PositionFeature);
-HACover coverWohnzimmer("wohnzimmer", HACover::PositionFeature);
+HACover coverBuero("buero_rollo");
+HACover coverSchlafzimmer2("schlafzimmer2");
+HACover coverSchlafzimmer("schlafzimmer");
+HACover coverGaestezimmer2("gaestezimmer_rollo2");
+HACover coverKueche1("kueche_rollo1");
+HACover coverKueche2("kueche_rollo2");
+HACover coverBad("bad_rollo");
+HACover coverSchlafzimmerRollo1("schlafzimmer_rollo1");
+HACover coverWz4("wz4");
+HACover coverWohnzimmerTuer("wohnzimmer_rollo_tuer");
+HACover coverWohnzimmer2("wohnzimmer_rollo2");
+HACover coverWohnzimmer3("wohnzimmer_rollo3");
+HACover coverSchlafzimmer1("schlafzimmer1");
+HACover coverWohnzimmer("wohnzimmer");
 
 struct CoverBinding {
   HACover* cover;
@@ -97,22 +91,30 @@ const size_t COVER_COUNT =
   sizeof(coverBindings) / sizeof(coverBindings[0]);
 
 // ============================================================
-// Custom MQTT position command support
-//
-// ArduinoHA HACover exposes OPEN/CLOSE/STOP through cmd_t, but
-// its generated discovery does not expose set_position_topic.
-// Home Assistant therefore needs a small discovery override and
-// a custom set_pos_t subscription so HomeKit percentages can
-// reach the ESP32.
-//
-// The screenshots supplied by the user confirm the ArduinoHA
-// data-topic layout: aha/<device-id>/<cover-id>/cmd_t and
-// aha/<device-id>/<cover-id>/pos_t.
+// HomeKit / MQTT Positionssteuerung
 // ============================================================
+// Home Assistant sends a target position to set_pos_t.
+// The discovery template adds the current HA position as:
+//     TARGET|CURRENT
+// Example: 50|100
+//
+// The ESP then sends OPEN/CLOSE via the existing CC1101 code and
+// stops after the calculated travel time.
 
-static const char* MQTT_DEVICE_ID = "a55cdbdf7b37";
+const char* const MQTT_BASE = "aha/a55cdbdf7b37";
 
-static const char* COVER_TOPIC_IDS[COVER_COUNT] = {
+struct ShutterMovement {
+  bool active;
+  bool opening;
+  int currentPosition;
+  int targetPosition;
+  unsigned long startedAt;
+  uint32_t durationMs;
+};
+
+ShutterMovement movements[COVER_COUNT];
+
+const char* const COVER_IDS[COVER_COUNT] = {
   "buero_rollo",
   "schlafzimmer2",
   "schlafzimmer",
@@ -129,7 +131,7 @@ static const char* COVER_TOPIC_IDS[COVER_COUNT] = {
   "wohnzimmer"
 };
 
-static const char* COVER_NAMES[COVER_COUNT] = {
+const char* const COVER_NAMES[COVER_COUNT] = {
   "Büro Rollo",
   "Schlafzimmer2",
   "Schlafzimmer",
@@ -146,263 +148,96 @@ static const char* COVER_NAMES[COVER_COUNT] = {
   "Wohnzimmer"
 };
 
-bool customDiscoveryPending = false;
-uint32_t customDiscoveryAt = 0;
-
-
-
-// Forward declaration.
-void startPositionMovement(size_t index, int targetPosition);
-
-size_t findCoverIndexByPositionTopic(const char* topic) {
-  if (!topic) return COVER_COUNT;
-
-  char expected[128];
+int findCoverByTopic(const char* topic) {
+  if (!topic) return -1;
 
   for (size_t i = 0; i < COVER_COUNT; i++) {
-    snprintf(
-      expected,
-      sizeof(expected),
-      "aha/%s/%s/set_pos_t",
-      MQTT_DEVICE_ID,
-      COVER_TOPIC_IDS[i]
-    );
+    char expected[128];
+    snprintf(expected, sizeof(expected), "%s/%s/set_pos_t",
+             MQTT_BASE, COVER_IDS[i]);
 
     if (strcmp(topic, expected) == 0) {
-      return i;
+      return (int)i;
     }
   }
 
-  return COVER_COUNT;
+  return -1;
 }
 
-// MQTT callback for the custom set_position_topic.
-void onMqttMessage(const char* topic, const uint8_t* payload, uint16_t length) {
+void publishPosition(size_t index, int position) {
+  if (index >= COVER_COUNT) return;
 
-  const size_t index = findCoverIndexByPositionTopic(topic);
-  if (index >= COVER_COUNT) {
-    return;
-  }
-
-  char value[16];
-  const size_t copyLength =
-    (length < sizeof(value) - 1) ? length : sizeof(value) - 1;
-
-  memcpy(value, payload, copyLength);
-  value[copyLength] = '\0';
-
-  char* endPtr = nullptr;
-  long requested = strtol(value, &endPtr, 10);
-
-  if (endPtr == value) {
-    Serial.print("MQTT Position: ungueltiger Wert: ");
-    Serial.println(value);
-    return;
-  }
-
-  requested = constrain(requested, 0L, 100L);
-
-  Serial.print("HA -> POSITION -> ");
-  Serial.print(COVER_NAMES[index]);
-  Serial.print(" -> ");
-  Serial.print(requested);
-  Serial.println("%");
-
-  startPositionMovement(index, (int)requested);
-}
-
-// Publish a discovery override for one cover. The unique_id and
-// entity_id stay identical to the ArduinoHA cover; we only add
-// set_position_topic so Home Assistant/HomeKit can send a target.
-void publishCoverDiscovery(size_t index) {
+  position = constrain(position, 0, 100);
 
   char topic[128];
-  snprintf(
-    topic,
-    sizeof(topic),
-    "homeassistant/cover/%s/%s/config",
-    MQTT_DEVICE_ID,
-    COVER_TOPIC_IDS[index]
-  );
+  snprintf(topic, sizeof(topic), "%s/%s/pos_t",
+           MQTT_BASE, COVER_IDS[index]);
 
-  char payload[1024];
+  char payload[8];
+  snprintf(payload, sizeof(payload), "%d", position);
 
-  snprintf(
-    payload,
-    sizeof(payload),
-    "{"
-      "\"name\":\"%s\","
-      "\"uniq_id\":\"%s\","
-      "\"obj_id\":\"%s\","
-      "\"dev_cla\":\"shutter\","
-      "\"cmd_t\":\"aha/%s/%s/cmd_t\","
-      "\"stat_t\":\"aha/%s/%s/stat_t\","
-      "\"pos_t\":\"aha/%s/%s/pos_t\","
-      "\"set_pos_t\":\"aha/%s/%s/set_pos_t\","
-      "\"pl_open\":\"OPEN\","
-      "\"pl_close\":\"CLOSE\","
-      "\"pl_stop\":\"STOP\","
-      "\"stat_open\":\"open\","
-      "\"stat_clsd\":\"closed\","
-      "\"stat_stopped\":\"stopped\","
-      "\"pos_open\":100,"
-      "\"pos_clsd\":0,"
-      "\"opt\":false,"
-      "\"dev\":{\"ids\":[\"%s\"],\"name\":\"ESP32-S3 Rollladen Controller\"}"
-    "}",
-    COVER_NAMES[index],
-    COVER_TOPIC_IDS[index],
-    COVER_TOPIC_IDS[index],
-    MQTT_DEVICE_ID, COVER_TOPIC_IDS[index],
-    MQTT_DEVICE_ID, COVER_TOPIC_IDS[index],
-    MQTT_DEVICE_ID, COVER_TOPIC_IDS[index],
-    MQTT_DEVICE_ID, COVER_TOPIC_IDS[index],
-    MQTT_DEVICE_ID
-  );
-
-  if (mqtt.publish(topic, payload, true)) {
-    Serial.print("Discovery Position aktiv: ");
-    Serial.println(COVER_NAMES[index]);
-  } else {
-    Serial.print("Discovery Position FEHLER: ");
-    Serial.println(COVER_NAMES[index]);
-  }
+  mqtt.publish(topic, payload);
 }
 
-void publishAllCoverDiscovery() {
-  for (size_t i = 0; i < COVER_COUNT; i++) {
-    publishCoverDiscovery(i);
-    delay(20);
-  }
-}
+void finishMovement(size_t index) {
+  if (index >= COVER_COUNT) return;
 
-struct MovementState {
-  bool active = false;
-  bool opening = false;
-  uint32_t startMs = 0;
-  uint32_t durationMs = 0;
-  int startPosition = 0;
-  int targetPosition = 0;
-};
+  ShutterMovement &m = movements[index];
 
-MovementState movements[COVER_COUNT];
-
-int clampPosition(int value) {
-  if (value < 0) return 0;
-  if (value > 100) return 100;
-  return value;
-}
-
-int getKnownOrAssumedPosition(HACover* cover, bool opening) {
-  const int16_t pos = cover->getCurrentPosition();
-  if (pos == HACover::DefaultPosition || pos < 0 || pos > 100) {
-    return opening ? 0 : 100;
-  }
-  return clampPosition(pos);
-}
-
-void updateMovement(size_t index) {
-  MovementState& m = movements[index];
   if (!m.active) return;
 
-  HACover* cover = coverBindings[index].cover;
-  const uint32_t elapsed = millis() - m.startMs;
-
-  if (elapsed >= m.durationMs) {
-    m.active = false;
-    cover->setPosition(m.targetPosition, true);
-    cover->setState(
-      m.targetPosition == 100 ? HACover::StateOpen : HACover::StateClosed,
-      true
-    );
-    return;
-  }
-
-  const float progress = (float)elapsed / (float)m.durationMs;
-  const float position =
-    m.startPosition +
-    (m.targetPosition - m.startPosition) * progress;
-
-  cover->setPosition(clampPosition((int)(position + 0.5f)));
-}
-
-void updateAllMovements() {
-  static uint32_t lastUpdate = 0;
-  if (millis() - lastUpdate < 200) return;
-  lastUpdate = millis();
-
-  for (size_t i = 0; i < COVER_COUNT; i++) {
-    updateMovement(i);
-  }
-}
-
-void startMovement(size_t index, bool opening) {
-  MovementState& m = movements[index];
-  HACover* cover = coverBindings[index].cover;
   const auto id = coverBindings[index].id;
 
-  // If a previous movement is still running, first calculate its current position.
-  updateMovement(index);
+  // Send the real STOP command at the calculated target.
+  shutterControl.stop(id);
 
-  const int startPosition = getKnownOrAssumedPosition(cover, opening);
-  m.active = true;
-  m.opening = opening;
-  m.startMs = millis();
-  m.startPosition = startPosition;
-  m.targetPosition = opening ? 100 : 0;
-  m.durationMs = opening
-    ? shutterControl.openDurationMsFor(id)
-    : shutterControl.closeDurationMsFor(id);
+  m.currentPosition = m.targetPosition;
+  m.active = false;
 
-  // Publish the starting position immediately.
-  // Do NOT publish StateOpening/StateClosing here: HomeKit can interpret
-  // those transient MQTT states as the final cover state. The position
-  // itself is updated continuously below and the final state is published
-  // only when the measured travel time has elapsed.
-  cover->setPosition(startPosition, true);
-}
+  publishPosition(index, m.currentPosition);
 
-
-// Start a movement to an arbitrary target position (0-100).
-// The RF protocol itself only has OPEN/CLOSE/STOP, so the target
-// is reached by sending OPEN or CLOSE and stopping after the
-// corresponding fraction of the measured travel time.
-void startPositionMovement(size_t index, int targetPosition) {
-
-  targetPosition = clampPosition(targetPosition);
-
-  MovementState& m = movements[index];
-  HACover* cover = coverBindings[index].cover;
-  const auto id = coverBindings[index].id;
-
-  // Finish the currently estimated position before replacing it.
-  updateMovement(index);
-
-  int startPosition = cover->getCurrentPosition();
-
-  if (
-    startPosition == HACover::DefaultPosition ||
-    startPosition < 0 ||
-    startPosition > 100
-  ) {
-    // If no position is known, only the two endpoints are safe
-    // assumptions. For an intermediate target we assume the
-    // opposite endpoint depending on the requested direction.
-    startPosition = (targetPosition > 50) ? 0 : 100;
+  if (m.currentPosition <= 0) {
+    coverBindings[index].cover->setState(HACover::StateClosed);
+  } else if (m.currentPosition >= 100) {
+    coverBindings[index].cover->setState(HACover::StateOpen);
+  } else {
+    coverBindings[index].cover->setState(HACover::StateStopped);
   }
 
-  startPosition = clampPosition(startPosition);
+  Serial.print("POSITION erreicht: ");
+  Serial.print(COVER_NAMES[index]);
+  Serial.print(" -> ");
+  Serial.print(m.currentPosition);
+  Serial.println("%");
+}
 
-  if (startPosition == targetPosition) {
+void startPositionMovement(size_t index, int currentPosition, int targetPosition) {
+  if (index >= COVER_COUNT) return;
+
+  currentPosition = constrain(currentPosition, 0, 100);
+  targetPosition = constrain(targetPosition, 0, 100);
+
+  ShutterMovement &m = movements[index];
+  const auto id = coverBindings[index].id;
+
+  // Stop an already running movement before starting a new one.
+  if (m.active) {
+    shutterControl.stop(id);
     m.active = false;
-    cover->setPosition(targetPosition, true);
-    cover->setState(
-      targetPosition == 100
-        ? HACover::StateOpen
-        : HACover::StateClosed,
-      true
+  }
+
+  m.currentPosition = currentPosition;
+  m.targetPosition = targetPosition;
+
+  if (currentPosition == targetPosition) {
+    publishPosition(index, targetPosition);
+    coverBindings[index].cover->setCurrentPosition(targetPosition);
+    coverBindings[index].cover->setState(
+      targetPosition == 0 ? HACover::StateClosed :
+      targetPosition == 100 ? HACover::StateOpen :
+      HACover::StateStopped
     );
-    Serial.print("HA -> POSITION bereits erreicht: ");
+    Serial.print("POSITION bereits erreicht: ");
     Serial.print(COVER_NAMES[index]);
     Serial.print(" -> ");
     Serial.print(targetPosition);
@@ -410,54 +245,178 @@ void startPositionMovement(size_t index, int targetPosition) {
     return;
   }
 
-  const bool opening = targetPosition > startPosition;
+  m.opening = targetPosition > currentPosition;
 
-  // Fraction of the full travel required.
-  const float fraction =
-    opening
-      ? (float)(targetPosition - startPosition) / 100.0f
-      : (float)(startPosition - targetPosition) / 100.0f;
+  uint32_t fullDuration = m.opening
+    ? shutterControl.openDurationMsFor(id)
+    : shutterControl.closeDurationMsFor(id);
 
-  const uint32_t fullDuration =
-    opening
-      ? shutterControl.openDurationMsFor(id)
-      : shutterControl.closeDurationMsFor(id);
+  uint32_t distance = (uint32_t)abs(targetPosition - currentPosition);
 
-  const uint32_t duration =
-    (uint32_t)((float)fullDuration * fraction + 0.5f);
+  m.durationMs = (fullDuration * distance) / 100UL;
 
-  if (duration == 0) {
-    m.active = false;
-    cover->setPosition(targetPosition, true);
-    return;
-  }
+  if (m.durationMs < 100) m.durationMs = 100;
 
-  Serial.print("Position: ");
-  Serial.print(startPosition);
+  Serial.print("HA -> POSITION -> ");
+  Serial.print(COVER_NAMES[index]);
+  Serial.print(": ");
+  Serial.print(currentPosition);
   Serial.print("% -> ");
   Serial.print(targetPosition);
   Serial.print("% | ");
-  Serial.print(duration);
+  Serial.print(m.durationMs);
   Serial.println(" ms");
 
-  bool ok =
-    opening
-      ? shutterControl.open(id)
-      : shutterControl.close(id);
+  bool ok = m.opening
+    ? shutterControl.open(id)
+    : shutterControl.close(id);
 
   if (!ok) {
     Serial.println("CC1101: POSITION SENDUNG FEHLGESCHLAGEN");
+    m.active = false;
     return;
   }
 
+  m.startedAt = millis();
   m.active = true;
-  m.opening = opening;
-  m.startMs = millis();
-  m.startPosition = startPosition;
-  m.targetPosition = targetPosition;
-  m.durationMs = duration;
 
-  cover->setPosition(startPosition, true);
+  coverBindings[index].cover->setState(
+    m.opening ? HACover::StateOpening : HACover::StateClosing
+  );
+
+  publishPosition(index, currentPosition);
+}
+
+void updateMovements() {
+  unsigned long now = millis();
+
+  for (size_t i = 0; i < COVER_COUNT; i++) {
+    ShutterMovement &m = movements[i];
+
+    if (!m.active) continue;
+
+    unsigned long elapsed = now - m.startedAt;
+
+    if (elapsed >= m.durationMs) {
+      finishMovement(i);
+      continue;
+    }
+
+    int start = m.currentPosition;
+    int target = m.targetPosition;
+
+    int delta = target - start;
+    int position = start + (int)((int64_t)delta * elapsed / m.durationMs);
+
+    if (position != start) {
+      coverBindings[i].cover->setPosition(position);
+    }
+  }
+}
+
+void publishPositionDiscovery(size_t index) {
+  if (index >= COVER_COUNT) return;
+
+  char configTopic[160];
+  char baseTopic[128];
+
+  snprintf(baseTopic, sizeof(baseTopic),
+           "%s/%s", MQTT_BASE, COVER_IDS[index]);
+
+  // Same discovery topic/object/unique_id as the existing ArduinoHA
+  // cover, but with the missing set_position_topic added.
+  snprintf(configTopic, sizeof(configTopic),
+           "homeassistant/cover/a55cdbdf7b37/%s/config",
+           COVER_IDS[index]);
+
+  char payload[1100];
+
+  snprintf(
+    payload,
+    sizeof(payload),
+    "{"
+      "\"~\":\"%s\","
+      "\"name\":\"%s\","
+      "\"uniq_id\":\"%s\","
+      "\"cmd_t\":\"~/cmd_t\","
+      "\"stat_t\":\"~/stat_t\","
+      "\"pos_t\":\"~/pos_t\","
+      "\"set_pos_t\":\"~/set_pos_t\","
+      "\"set_pos_tpl\":\"{{ position }}|{{ state_attr(entity_id, 'current_position') | int(0) }}\","
+      "\"dev_cla\":\"shutter\","
+      "\"pl_open\":\"OPEN\","
+      "\"pl_clsd\":\"CLOSE\","
+      "\"pl_stop\":\"STOP\","
+      "\"stat_open\":\"open\","
+      "\"stat_opening\":\"opening\","
+      "\"stat_clsd\":\"closed\","
+      "\"stat_closing\":\"closing\","
+      "\"stat_stopped\":\"stopped\","
+      "\"pos_open\":100,"
+      "\"pos_clsd\":0,"
+      "\"opt\":false"
+    "}",
+    baseTopic,
+    COVER_NAMES[index],
+    COVER_IDS[index]
+  );
+
+  mqtt.publish(configTopic, payload, true);
+
+  Serial.print("HK Position Discovery: ");
+  Serial.println(COVER_IDS[index]);
+}
+
+void publishAllPositionDiscovery() {
+  for (size_t i = 0; i < COVER_COUNT; i++) {
+    publishPositionDiscovery(i);
+  }
+}
+
+void onMqttMessage(const char* topic, const uint8_t* payload, uint16_t length) {
+  if (!topic || !payload || length == 0) return;
+
+  int index = findCoverByTopic(topic);
+  if (index < 0) return;
+
+  char buffer[32];
+  size_t copyLength = length;
+  if (copyLength >= sizeof(buffer)) copyLength = sizeof(buffer) - 1;
+
+  memcpy(buffer, payload, copyLength);
+  buffer[copyLength] = '\0';
+
+  int target = -1;
+  int current = -1;
+
+  char* separator = strchr(buffer, '|');
+
+  if (separator) {
+    *separator = '\0';
+    target = atoi(buffer);
+    current = atoi(separator + 1);
+  } else {
+    target = atoi(buffer);
+  }
+
+  if (target < 0 || target > 100) {
+    Serial.print("Ungültige Zielposition: ");
+    Serial.println(buffer);
+    return;
+  }
+
+  // If HA didn't provide the current position, use our last known value.
+  if (current < 0 || current > 100) {
+    current = movements[index].currentPosition;
+
+    if (current < 0 || current > 100) {
+      Serial.println("Keine aktuelle Position bekannt.");
+      Serial.println("Bitte einmal in HA die aktuelle Position setzen.");
+      return;
+    }
+  }
+
+  startPositionMovement(index, current, target);
 }
 
 // ============================================================
@@ -511,6 +470,9 @@ void onNetworkEvent(
 // MQTT events
 // ============================================================
 
+bool positionDiscoveryPending = false;
+unsigned long positionDiscoveryAt = 0;
+
 void onMqttConnected() {
   Serial.println();
   Serial.println("********************************");
@@ -519,11 +481,20 @@ void onMqttConnected() {
 
   statusSensor.setValue("online");
 
-  // Re-apply the discovery override shortly after ArduinoHA has
-  // published its own discovery messages.
-  mqtt.subscribe("aha/a55cdbdf7b37/+/set_pos_t");
-  customDiscoveryPending = true;
-  customDiscoveryAt = millis() + 1500;
+  mqtt.onMessage(onMqttMessage);
+
+  for (size_t i = 0; i < COVER_COUNT; i++) {
+    char topic[128];
+    snprintf(topic, sizeof(topic), "%s/%s/set_pos_t",
+             MQTT_BASE, COVER_IDS[i]);
+    mqtt.subscribe(topic);
+  }
+
+  // ArduinoHA publishes its own discovery during connection.
+  // We overwrite it shortly afterwards with the identical cover
+  // plus set_position_topic.
+  positionDiscoveryPending = true;
+  positionDiscoveryAt = millis() + 1500;
 }
 
 void onMqttDisconnected() {
@@ -609,46 +580,38 @@ void onCoverCommand(
 
     switch (command) {
 
-      case HACover::CommandOpen: {
+      case HACover::CommandOpen:
         Serial.print("HA -> OPEN -> ");
         Serial.println(shutterControl.name(id));
 
         ok = shutterControl.open(id);
 
         if (ok) {
-          startMovement(i, true);
+          sender->setState(HACover::StateOpen);
         }
         break;
-      }
 
-      case HACover::CommandClose: {
+      case HACover::CommandClose:
         Serial.print("HA -> CLOSE -> ");
         Serial.println(shutterControl.name(id));
 
         ok = shutterControl.close(id);
 
         if (ok) {
-          startMovement(i, false);
+          sender->setState(HACover::StateClosed);
         }
         break;
-      }
 
-      case HACover::CommandStop: {
+      case HACover::CommandStop:
         Serial.print("HA -> STOP -> ");
         Serial.println(shutterControl.name(id));
-
-        updateMovement(i);
-        const int stopPosition = getKnownOrAssumedPosition(sender, false);
 
         ok = shutterControl.stop(id);
 
         if (ok) {
-          movements[i].active = false;
-          sender->setPosition(stopPosition, true);
-          sender->setState(HACover::StateStopped, true);
+          sender->setState(HACover::StateStopped);
         }
         break;
-      }
 
       default:
         break;
@@ -673,9 +636,9 @@ void setupCover(
   cover.setDeviceClass("shutter");
   cover.setIcon(icon);
 
-  // Position is estimated from the known motor travel time.
-  // We publish the state/position ourselves, so optimistic mode is disabled.
-  cover.setOptimistic(false);
+  // There is no position feedback from the 433 MHz motors.
+  // Therefore HA should treat commands optimistically.
+  cover.setOptimistic(true);
 
   cover.onCommand(onCoverCommand);
 }
@@ -695,15 +658,6 @@ void setup() {
   Serial.println("Ethernet + MQTT + CC1101");
   Serial.println("Broadlink RF -> CC1101");
   Serial.println("================================");
-
-  // ----------------------------------------------------------
-  // Onboard RGB LED OFF
-  // ----------------------------------------------------------
-
-  statusLed.begin();
-  statusLed.clear();
-  statusLed.show();
-  Serial.println("Onboard RGB LED: AUS");
 
   // ----------------------------------------------------------
   // Ethernet
@@ -787,11 +741,6 @@ void setup() {
   mqtt.onConnected(onMqttConnected);
   mqtt.onDisconnected(onMqttDisconnected);
   mqtt.onStateChanged(onMqttStateChanged);
-  mqtt.onMessage(onMqttMessage);
-
-  // ArduinoHA's default MQTT buffer is 256 bytes. Our custom
-  // discovery messages are larger, so use a safe buffer size.
-  mqtt.setBufferSize(1024);
 
   Serial.println();
   Serial.println("Starte MQTT...");
@@ -814,6 +763,15 @@ void setup() {
 
   Serial.println("MQTT gestartet");
 
+  for (size_t i = 0; i < COVER_COUNT; i++) {
+    movements[i].active = false;
+    movements[i].opening = false;
+    movements[i].currentPosition = -1;
+    movements[i].targetPosition = -1;
+    movements[i].startedAt = 0;
+    movements[i].durationMs = 0;
+  }
+
   // ----------------------------------------------------------
   // CC1101
   // ----------------------------------------------------------
@@ -823,7 +781,6 @@ void setup() {
   Serial.println();
   Serial.println("================================");
   Serial.println("SETUP FERTIG");
-  Serial.println("Positionsberechnung: zeitbasiert (27s AUF / 17s ZU)");
   Serial.println("================================");
 }
 
@@ -834,17 +791,14 @@ void setup() {
 void loop() {
 
   mqtt.loop();
+  updateMovements();
 
-  if (
-    customDiscoveryPending &&
-    mqtt.isConnected() &&
-    (int32_t)(millis() - customDiscoveryAt) >= 0
-  ) {
-    customDiscoveryPending = false;
-    publishAllCoverDiscovery();
+  if (positionDiscoveryPending &&
+      (long)(millis() - positionDiscoveryAt) >= 0 &&
+      mqtt.isConnected()) {
+    positionDiscoveryPending = false;
+    publishAllPositionDiscovery();
   }
-
-  updateAllMovements();
 
   static unsigned long lastMqttCheck = 0;
 
