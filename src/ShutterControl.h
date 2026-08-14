@@ -15,7 +15,7 @@
 #define CC1101_SCK   18
 #define CC1101_MISO  16
 #define CC1101_MOSI  17
-#define CC1101_CS    1
+#define CC1101_CS    21
 
 static SPIClass cc1101SPI(FSPI);
 static SPISettings cc1101SPISettings(2000000, MSBFIRST, SPI_MODE0);
@@ -60,11 +60,6 @@ private:
 
   static const CodeSet codes[];
 
-  // Fahrzeiten aus der bisherigen Homebridge/Broadlink-Konfiguration.
-  // Index entspricht ShutterId.
-  static const uint32_t openDurationMs[];
-  static const uint32_t closeDurationMs[];
-
   static uint32_t broadlinkUnitToUs(uint16_t unit) {
     return (uint32_t)((unit * 8192UL + 134) / 269UL);
   }
@@ -88,13 +83,13 @@ private:
       return (uint8_t)((nibble(hex[pos]) << 4) | nibble(hex[pos + 1]));
     };
 
-    if (hexByte(0) != 0xB1 || hexByte(2) != 0xC0) {
+    if (hexByte(0) != 0xB1 || hexByte(1) != 0xC0) {
       Serial.println("CC1101: kein B1C0-RF-Code");
       return false;
     }
 
     const uint16_t payloadLength =
-      (uint16_t)hexByte(4) | ((uint16_t)hexByte(6) << 8);
+      (uint16_t)hexByte(2) | ((uint16_t)hexByte(3) << 8);
 
     if ((size_t)payloadLength + 4 > byteLen || byteLen < 10) {
       Serial.println("CC1101: ungültiges Broadlink-Längenfeld");
@@ -111,26 +106,7 @@ private:
     // Broadlink stores 00 + 16-bit big-endian value.
     // 0005dc is the usual 1500-unit end gap.
 
-    // Make absolutely sure the CC1101 is idle before entering direct TX.
-    // A previous asynchronous direct transmission can leave the chip in TX
-    // state; the following SPI register write can then fail with -16.
-    int16_t state = radio.standby();
-    if (state != RADIOLIB_ERR_NONE) {
-      Serial.print("CC1101 standby VOR Direct-TX FEHLER: ");
-      Serial.println(state);
-      return false;
-    }
-
-    state = radio.packetMode();
-    if (state != RADIOLIB_ERR_NONE) {
-      Serial.print("CC1101 packetMode VOR Direct-TX FEHLER: ");
-      Serial.println(state);
-      return false;
-    }
-
-    delay(2);
-
-    state = radio.transmitDirectAsync();
+    int16_t state = radio.transmitDirectAsync();
 
     if (state != RADIOLIB_ERR_NONE) {
       Serial.print("CC1101 TX Start Fehler: ");
@@ -175,26 +151,10 @@ private:
     }
 
     digitalWrite(CC1101_DATA, LOW);
-
-    // Stop asynchronous direct TX first. Do this BEFORE packetMode(), so
-    // the CC1101 is no longer transmitting while its packet registers are
-    // restored. This is the important fix for the recurring -16 error.
-    int16_t endState = radio.standby();
-    if (endState != RADIOLIB_ERR_NONE) {
-      Serial.print("CC1101 standby NACH Direct-TX FEHLER: ");
-      Serial.println(endState);
-      return false;
-    }
-
-    endState = radio.packetMode();
-    if (endState != RADIOLIB_ERR_NONE) {
-      Serial.print("CC1101 packetMode NACH Direct-TX FEHLER: ");
-      Serial.println(endState);
-      return false;
-    }
-
-    pinMode(CC1101_DATA, INPUT);
     delayMicroseconds(200);
+
+    // Leave direct mode before anything else uses the CC1101.
+    radio.packetMode();
 
     return true;
   }
@@ -206,7 +166,6 @@ public:
     Serial.println("CC1101 RADIOLIB TX SETUP");
     Serial.println("================================");
     Serial.println("Nur SENDEN - kein RX");
-    Serial.println("CC1101 CS: GPIO1");
 
     pinMode(CC1101_DATA, OUTPUT);
     digitalWrite(CC1101_DATA, LOW);
@@ -250,7 +209,7 @@ public:
 
   bool open(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= 14) {
+        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
       return false;
     }
 
@@ -262,7 +221,7 @@ public:
 
   bool close(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= 14) {
+        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
       return false;
     }
 
@@ -274,7 +233,7 @@ public:
 
   bool stop(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= 14) {
+        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
       return false;
     }
 
@@ -284,27 +243,9 @@ public:
     return sendBroadlinkCode(codes[id].stop);
   }
 
-  uint32_t openDurationMsFor(ShutterId id) const {
-    return openDurationMs[(int)id];
-  }
-
-  uint32_t closeDurationMsFor(ShutterId id) const {
-    return closeDurationMs[(int)id];
-  }
-
   const char* name(ShutterId id) const {
     return codes[id].name;
   }
-};
-
-const uint32_t ShutterControl::openDurationMs[] = {
-  27000, 27000, 27000, 27000, 27000, 27000, 27000,
-  27000, 27000, 27000, 27000, 30000, 30000, 27000
-};
-
-const uint32_t ShutterControl::closeDurationMs[] = {
-  17000, 17000, 17000, 17000, 17000, 17000, 17000,
-  17000, 17000, 17000, 17000, 23000, 17000, 17000
 };
 
 // ============================================================
