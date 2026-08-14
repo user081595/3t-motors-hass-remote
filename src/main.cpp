@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoHA.h>
+#include <Adafruit_NeoPixel.h>
 #include <ETH.h>
 #include <Network.h>
 #include <config.h>
@@ -35,6 +36,11 @@ bool ethConnected = false;
 
 NetworkClient client;
 
+// Onboard WS2812 RGB LED of the Waveshare ESP32-S3-ETH
+// is connected to GPIO21. It must be kept completely separate
+// from the CC1101, which now uses GPIO1 as CS.
+Adafruit_NeoPixel statusLed(1, 21, NEO_GRB + NEO_KHZ800);
+
 byte mac[] = {
   0xA5, 0x5C, 0xDB, 0xDF, 0x7B, 0x37
 };
@@ -50,20 +56,20 @@ ShutterControl shutterControl;
 // HA Covers
 // ============================================================
 
-HACover coverBuero("buero_rollo");
-HACover coverSchlafzimmer2("schlafzimmer2");
-HACover coverSchlafzimmer("schlafzimmer");
-HACover coverGaestezimmer2("gaestezimmer_rollo2");
-HACover coverKueche1("kueche_rollo1");
-HACover coverKueche2("kueche_rollo2");
-HACover coverBad("bad_rollo");
-HACover coverSchlafzimmerRollo1("schlafzimmer_rollo1");
-HACover coverWz4("wz4");
-HACover coverWohnzimmerTuer("wohnzimmer_rollo_tuer");
-HACover coverWohnzimmer2("wohnzimmer_rollo2");
-HACover coverWohnzimmer3("wohnzimmer_rollo3");
-HACover coverSchlafzimmer1("schlafzimmer1");
-HACover coverWohnzimmer("wohnzimmer");
+HACover coverBuero("buero_rollo", HACover::PositionFeature);
+HACover coverSchlafzimmer2("schlafzimmer2", HACover::PositionFeature);
+HACover coverSchlafzimmer("schlafzimmer", HACover::PositionFeature);
+HACover coverGaestezimmer2("gaestezimmer_rollo2", HACover::PositionFeature);
+HACover coverKueche1("kueche_rollo1", HACover::PositionFeature);
+HACover coverKueche2("kueche_rollo2", HACover::PositionFeature);
+HACover coverBad("bad_rollo", HACover::PositionFeature);
+HACover coverSchlafzimmerRollo1("schlafzimmer_rollo1", HACover::PositionFeature);
+HACover coverWz4("wz4", HACover::PositionFeature);
+HACover coverWohnzimmerTuer("wohnzimmer_rollo_tuer", HACover::PositionFeature);
+HACover coverWohnzimmer2("wohnzimmer_rollo2", HACover::PositionFeature);
+HACover coverWohnzimmer3("wohnzimmer_rollo3", HACover::PositionFeature);
+HACover coverSchlafzimmer1("schlafzimmer1", HACover::PositionFeature);
+HACover coverWohnzimmer("wohnzimmer", HACover::PositionFeature);
 
 struct CoverBinding {
   HACover* cover;
@@ -89,6 +95,91 @@ CoverBinding coverBindings[] = {
 
 const size_t COVER_COUNT =
   sizeof(coverBindings) / sizeof(coverBindings[0]);
+
+struct MovementState {
+  bool active = false;
+  bool opening = false;
+  uint32_t startMs = 0;
+  uint32_t durationMs = 0;
+  int startPosition = 0;
+  int targetPosition = 0;
+};
+
+MovementState movements[COVER_COUNT];
+
+int clampPosition(int value) {
+  if (value < 0) return 0;
+  if (value > 100) return 100;
+  return value;
+}
+
+int getKnownOrAssumedPosition(HACover* cover, bool opening) {
+  const int16_t pos = cover->getCurrentPosition();
+  if (pos == HACover::DefaultPosition || pos < 0 || pos > 100) {
+    return opening ? 0 : 100;
+  }
+  return clampPosition(pos);
+}
+
+void updateMovement(size_t index) {
+  MovementState& m = movements[index];
+  if (!m.active) return;
+
+  HACover* cover = coverBindings[index].cover;
+  const uint32_t elapsed = millis() - m.startMs;
+
+  if (elapsed >= m.durationMs) {
+    m.active = false;
+    cover->setPosition(m.targetPosition, true);
+    cover->setState(
+      m.targetPosition == 100 ? HACover::StateOpen : HACover::StateClosed,
+      true
+    );
+    return;
+  }
+
+  const float progress = (float)elapsed / (float)m.durationMs;
+  const float position =
+    m.startPosition +
+    (m.targetPosition - m.startPosition) * progress;
+
+  cover->setPosition(clampPosition((int)(position + 0.5f)));
+}
+
+void updateAllMovements() {
+  static uint32_t lastUpdate = 0;
+  if (millis() - lastUpdate < 500) return;
+  lastUpdate = millis();
+
+  for (size_t i = 0; i < COVER_COUNT; i++) {
+    updateMovement(i);
+  }
+}
+
+void startMovement(size_t index, bool opening) {
+  MovementState& m = movements[index];
+  HACover* cover = coverBindings[index].cover;
+  const auto id = coverBindings[index].id;
+
+  // If a previous movement is still running, first calculate its current position.
+  updateMovement(index);
+
+  const int startPosition = getKnownOrAssumedPosition(cover, opening);
+  m.active = true;
+  m.opening = opening;
+  m.startMs = millis();
+  m.startPosition = startPosition;
+  m.targetPosition = opening ? 100 : 0;
+  m.durationMs = opening
+    ? shutterControl.openDurationMsFor(id)
+    : shutterControl.closeDurationMsFor(id);
+
+  cover->setPosition(startPosition, true);
+  cover->setState(
+    opening ? HACover::StateOpening : HACover::StateClosing,
+    true
+  );
+}
 
 // ============================================================
 // Ethernet events
@@ -233,38 +324,46 @@ void onCoverCommand(
 
     switch (command) {
 
-      case HACover::CommandOpen:
+      case HACover::CommandOpen: {
         Serial.print("HA -> OPEN -> ");
         Serial.println(shutterControl.name(id));
 
         ok = shutterControl.open(id);
 
         if (ok) {
-          sender->setState(HACover::StateOpen);
+          startMovement(i, true);
         }
         break;
+      }
 
-      case HACover::CommandClose:
+      case HACover::CommandClose: {
         Serial.print("HA -> CLOSE -> ");
         Serial.println(shutterControl.name(id));
 
         ok = shutterControl.close(id);
 
         if (ok) {
-          sender->setState(HACover::StateClosed);
+          startMovement(i, false);
         }
         break;
+      }
 
-      case HACover::CommandStop:
+      case HACover::CommandStop: {
         Serial.print("HA -> STOP -> ");
         Serial.println(shutterControl.name(id));
+
+        updateMovement(i);
+        const int stopPosition = getKnownOrAssumedPosition(sender, false);
 
         ok = shutterControl.stop(id);
 
         if (ok) {
-          sender->setState(HACover::StateStopped);
+          movements[i].active = false;
+          sender->setPosition(stopPosition, true);
+          sender->setState(HACover::StateStopped, true);
         }
         break;
+      }
 
       default:
         break;
@@ -289,9 +388,9 @@ void setupCover(
   cover.setDeviceClass("shutter");
   cover.setIcon(icon);
 
-  // There is no position feedback from the 433 MHz motors.
-  // Therefore HA should treat commands optimistically.
-  cover.setOptimistic(true);
+  // Position is estimated from the known motor travel time.
+  // We publish the state/position ourselves, so optimistic mode is disabled.
+  cover.setOptimistic(false);
 
   cover.onCommand(onCoverCommand);
 }
@@ -311,6 +410,15 @@ void setup() {
   Serial.println("Ethernet + MQTT + CC1101");
   Serial.println("Broadlink RF -> CC1101");
   Serial.println("================================");
+
+  // ----------------------------------------------------------
+  // Onboard RGB LED OFF
+  // ----------------------------------------------------------
+
+  statusLed.begin();
+  statusLed.clear();
+  statusLed.show();
+  Serial.println("Onboard RGB LED: AUS");
 
   // ----------------------------------------------------------
   // Ethernet
@@ -435,6 +543,7 @@ void setup() {
 void loop() {
 
   mqtt.loop();
+  updateAllMovements();
 
   static unsigned long lastMqttCheck = 0;
 
