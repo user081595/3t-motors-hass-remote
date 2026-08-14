@@ -96,6 +96,185 @@ CoverBinding coverBindings[] = {
 const size_t COVER_COUNT =
   sizeof(coverBindings) / sizeof(coverBindings[0]);
 
+// ============================================================
+// Custom MQTT position command support
+//
+// ArduinoHA HACover exposes OPEN/CLOSE/STOP through cmd_t, but
+// its generated discovery does not expose set_position_topic.
+// Home Assistant therefore needs a small discovery override and
+// a custom set_pos_t subscription so HomeKit percentages can
+// reach the ESP32.
+//
+// The screenshots supplied by the user confirm the ArduinoHA
+// data-topic layout: aha/<device-id>/<cover-id>/cmd_t and
+// aha/<device-id>/<cover-id>/pos_t.
+// ============================================================
+
+static const char* MQTT_DEVICE_ID = "a55cdbdf7b37";
+
+static const char* COVER_TOPIC_IDS[COVER_COUNT] = {
+  "buero_rollo",
+  "schlafzimmer2",
+  "schlafzimmer",
+  "gaestezimmer_rollo2",
+  "kueche_rollo1",
+  "kueche_rollo2",
+  "bad_rollo",
+  "schlafzimmer_rollo1",
+  "wz4",
+  "wohnzimmer_rollo_tuer",
+  "wohnzimmer_rollo2",
+  "wohnzimmer_rollo3",
+  "schlafzimmer1",
+  "wohnzimmer"
+};
+
+static const char* COVER_NAMES[COVER_COUNT] = {
+  "Büro Rollo",
+  "Schlafzimmer2",
+  "Schlafzimmer",
+  "Gästezimmer Rollo2",
+  "Küche Rollo1",
+  "Küche Rollo2",
+  "Bad Rollo",
+  "Schlafzimmer Rollo1",
+  "wz4",
+  "Wohnzimmer Rollo Tür",
+  "Wohnzimmer Rollo2",
+  "Wohnzimmer Rollo3",
+  "Schlafzimmer1",
+  "Wohnzimmer"
+};
+
+bool customDiscoveryPending = false;
+uint32_t customDiscoveryAt = 0;
+
+
+
+// Forward declaration.
+void startPositionMovement(size_t index, int targetPosition);
+
+size_t findCoverIndexByPositionTopic(const char* topic) {
+  if (!topic) return COVER_COUNT;
+
+  char expected[128];
+
+  for (size_t i = 0; i < COVER_COUNT; i++) {
+    snprintf(
+      expected,
+      sizeof(expected),
+      "aha/%s/%s/set_pos_t",
+      MQTT_DEVICE_ID,
+      COVER_TOPIC_IDS[i]
+    );
+
+    if (strcmp(topic, expected) == 0) {
+      return i;
+    }
+  }
+
+  return COVER_COUNT;
+}
+
+// MQTT callback for the custom set_position_topic.
+void onMqttMessage(const char* topic, const uint8_t* payload, uint16_t length) {
+
+  const size_t index = findCoverIndexByPositionTopic(topic);
+  if (index >= COVER_COUNT) {
+    return;
+  }
+
+  char value[16];
+  const size_t copyLength =
+    (length < sizeof(value) - 1) ? length : sizeof(value) - 1;
+
+  memcpy(value, payload, copyLength);
+  value[copyLength] = '\0';
+
+  char* endPtr = nullptr;
+  long requested = strtol(value, &endPtr, 10);
+
+  if (endPtr == value) {
+    Serial.print("MQTT Position: ungueltiger Wert: ");
+    Serial.println(value);
+    return;
+  }
+
+  requested = constrain(requested, 0L, 100L);
+
+  Serial.print("HA -> POSITION -> ");
+  Serial.print(COVER_NAMES[index]);
+  Serial.print(" -> ");
+  Serial.print(requested);
+  Serial.println("%");
+
+  startPositionMovement(index, (int)requested);
+}
+
+// Publish a discovery override for one cover. The unique_id and
+// entity_id stay identical to the ArduinoHA cover; we only add
+// set_position_topic so Home Assistant/HomeKit can send a target.
+void publishCoverDiscovery(size_t index) {
+
+  char topic[128];
+  snprintf(
+    topic,
+    sizeof(topic),
+    "homeassistant/cover/%s/config",
+    COVER_TOPIC_IDS[index]
+  );
+
+  char payload[1024];
+
+  snprintf(
+    payload,
+    sizeof(payload),
+    "{"
+      "\"name\":\"%s\","
+      "\"uniq_id\":\"%s\","
+      "\"obj_id\":\"%s\","
+      "\"dev_cla\":\"shutter\","
+      "\"cmd_t\":\"aha/%s/%s/cmd_t\","
+      "\"stat_t\":\"aha/%s/%s/stat_t\","
+      "\"pos_t\":\"aha/%s/%s/pos_t\","
+      "\"set_pos_t\":\"aha/%s/%s/set_pos_t\","
+      "\"pl_open\":\"OPEN\","
+      "\"pl_close\":\"CLOSE\","
+      "\"pl_stop\":\"STOP\","
+      "\"stat_open\":\"open\","
+      "\"stat_clsd\":\"closed\","
+      "\"stat_stopped\":\"stopped\","
+      "\"pos_open\":100,"
+      "\"pos_clsd\":0,"
+      "\"opt\":false,"
+      "\"dev\":{\"ids\":[\"%s\"],\"name\":\"ESP32-S3 Rollladen Controller\"}"
+    "}",
+    COVER_NAMES[index],
+    COVER_TOPIC_IDS[index],
+    COVER_TOPIC_IDS[index],
+    MQTT_DEVICE_ID, COVER_TOPIC_IDS[index],
+    MQTT_DEVICE_ID, COVER_TOPIC_IDS[index],
+    MQTT_DEVICE_ID, COVER_TOPIC_IDS[index],
+    MQTT_DEVICE_ID, COVER_TOPIC_IDS[index],
+    MQTT_DEVICE_ID
+  );
+
+  if (mqtt.publish(topic, payload, true)) {
+    Serial.print("Discovery Position aktiv: ");
+    Serial.println(COVER_NAMES[index]);
+  } else {
+    Serial.print("Discovery Position FEHLER: ");
+    Serial.println(COVER_NAMES[index]);
+  }
+}
+
+void publishAllCoverDiscovery() {
+  for (size_t i = 0; i < COVER_COUNT; i++) {
+    publishCoverDiscovery(i);
+    delay(20);
+  }
+}
+
 struct MovementState {
   bool active = false;
   bool opening = false;
@@ -182,6 +361,104 @@ void startMovement(size_t index, bool opening) {
   cover->setPosition(startPosition, true);
 }
 
+
+// Start a movement to an arbitrary target position (0-100).
+// The RF protocol itself only has OPEN/CLOSE/STOP, so the target
+// is reached by sending OPEN or CLOSE and stopping after the
+// corresponding fraction of the measured travel time.
+void startPositionMovement(size_t index, int targetPosition) {
+
+  targetPosition = clampPosition(targetPosition);
+
+  MovementState& m = movements[index];
+  HACover* cover = coverBindings[index].cover;
+  const auto id = coverBindings[index].id;
+
+  // Finish the currently estimated position before replacing it.
+  updateMovement(index);
+
+  int startPosition = cover->getCurrentPosition();
+
+  if (
+    startPosition == HACover::DefaultPosition ||
+    startPosition < 0 ||
+    startPosition > 100
+  ) {
+    // If no position is known, only the two endpoints are safe
+    // assumptions. For an intermediate target we assume the
+    // opposite endpoint depending on the requested direction.
+    startPosition = (targetPosition > 50) ? 0 : 100;
+  }
+
+  startPosition = clampPosition(startPosition);
+
+  if (startPosition == targetPosition) {
+    m.active = false;
+    cover->setPosition(targetPosition, true);
+    cover->setState(
+      targetPosition == 100
+        ? HACover::StateOpen
+        : HACover::StateClosed,
+      true
+    );
+    Serial.print("HA -> POSITION bereits erreicht: ");
+    Serial.print(COVER_NAMES[index]);
+    Serial.print(" -> ");
+    Serial.print(targetPosition);
+    Serial.println("%");
+    return;
+  }
+
+  const bool opening = targetPosition > startPosition;
+
+  // Fraction of the full travel required.
+  const float fraction =
+    opening
+      ? (float)(targetPosition - startPosition) / 100.0f
+      : (float)(startPosition - targetPosition) / 100.0f;
+
+  const uint32_t fullDuration =
+    opening
+      ? shutterControl.openDurationMsFor(id)
+      : shutterControl.closeDurationMsFor(id);
+
+  const uint32_t duration =
+    (uint32_t)((float)fullDuration * fraction + 0.5f);
+
+  if (duration == 0) {
+    m.active = false;
+    cover->setPosition(targetPosition, true);
+    return;
+  }
+
+  Serial.print("Position: ");
+  Serial.print(startPosition);
+  Serial.print("% -> ");
+  Serial.print(targetPosition);
+  Serial.print("% | ");
+  Serial.print(duration);
+  Serial.println(" ms");
+
+  bool ok =
+    opening
+      ? shutterControl.open(id)
+      : shutterControl.close(id);
+
+  if (!ok) {
+    Serial.println("CC1101: POSITION SENDUNG FEHLGESCHLAGEN");
+    return;
+  }
+
+  m.active = true;
+  m.opening = opening;
+  m.startMs = millis();
+  m.startPosition = startPosition;
+  m.targetPosition = targetPosition;
+  m.durationMs = duration;
+
+  cover->setPosition(startPosition, true);
+}
+
 // ============================================================
 // Ethernet events
 // ============================================================
@@ -240,6 +517,12 @@ void onMqttConnected() {
   Serial.println("********************************");
 
   statusSensor.setValue("online");
+
+  // Re-apply the discovery override shortly after ArduinoHA has
+  // published its own discovery messages.
+  mqtt.subscribe("aha/a55cdbdf7b37/+/set_pos_t");
+  customDiscoveryPending = true;
+  customDiscoveryAt = millis() + 1500;
 }
 
 void onMqttDisconnected() {
@@ -503,6 +786,11 @@ void setup() {
   mqtt.onConnected(onMqttConnected);
   mqtt.onDisconnected(onMqttDisconnected);
   mqtt.onStateChanged(onMqttStateChanged);
+  mqtt.onMessage(onMqttMessage);
+
+  // ArduinoHA's default MQTT buffer is 256 bytes. Our custom
+  // discovery messages are larger, so use a safe buffer size.
+  mqtt.setBufferSize(1024);
 
   Serial.println();
   Serial.println("Starte MQTT...");
@@ -545,6 +833,16 @@ void setup() {
 void loop() {
 
   mqtt.loop();
+
+  if (
+    customDiscoveryPending &&
+    mqtt.isConnected() &&
+    (int32_t)(millis() - customDiscoveryAt) >= 0
+  ) {
+    customDiscoveryPending = false;
+    publishAllCoverDiscovery();
+  }
+
   updateAllMovements();
 
   static unsigned long lastMqttCheck = 0;
