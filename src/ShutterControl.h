@@ -89,7 +89,7 @@ private:
       return (uint8_t)((nibble(hex[pos]) << 4) | nibble(hex[pos + 1]));
     };
 
-    if (hexByte(0) != 0xB1 || hexByte(1) != 0xC0) {
+    if (hexByte(0) != 0xB1 || hexByte(2) != 0xC0) {
       Serial.println("CC1101: kein B1C0-RF-Code");
       return false;
     }
