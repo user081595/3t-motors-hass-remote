@@ -1,6 +1,12 @@
 #include <Arduino.h>
+#include <ArduinoHA.h>
 #include <ETH.h>
 #include <Network.h>
+#include <config.h>
+
+// ==============================
+// W5500
+// ==============================
 
 #define ETH_PHY_TYPE   ETH_PHY_W5500
 #define ETH_PHY_ADDR   1
@@ -13,6 +19,10 @@
 #define ETH_SPI_MISO   12
 #define ETH_SPI_MOSI   11
 
+// ==============================
+// Netzwerk
+// ==============================
+
 IPAddress local_ip(192, 168, 188, 250);
 IPAddress gateway(192, 168, 188, 1);
 IPAddress subnet(255, 255, 255, 0);
@@ -20,42 +30,65 @@ IPAddress dns(192, 168, 188, 1);
 
 bool ethConnected = false;
 
-void onEvent(arduino_event_id_t event, arduino_event_info_t info) {
+// ==============================
+// Home Assistant / MQTT
+// ==============================
+
+NetworkClient client;
+
+byte mac[] = {
+  0xA5, 0x5C, 0xDB, 0xDF, 0x7B, 0x37
+};
+
+HADevice device(mac, sizeof(mac));
+HAMqtt mqtt(client, device);
+
+HASensor statusSensor("status");
+
+
+// ==============================
+// Ethernet Events
+// ==============================
+
+void onNetworkEvent(arduino_event_id_t event, arduino_event_info_t info) {
 
   switch (event) {
 
     case ARDUINO_EVENT_ETH_START:
-      Serial.println("ETH Started");
+      Serial.println("ETH gestartet");
       ETH.setHostname("esp32-s3-shutter");
       break;
 
     case ARDUINO_EVENT_ETH_CONNECTED:
-      Serial.println("ETH Connected");
+      Serial.println("ETH verbunden");
       break;
 
     case ARDUINO_EVENT_ETH_GOT_IP:
-      Serial.println("ETH Got IP!");
+
+      Serial.println("ETH IP erhalten");
+
       Serial.print("IP: ");
       Serial.println(ETH.localIP());
+
       Serial.print("Gateway: ");
       Serial.println(ETH.gatewayIP());
-      Serial.print("Subnet: ");
-      Serial.println(ETH.subnetMask());
+
       ethConnected = true;
+
       break;
 
     case ARDUINO_EVENT_ETH_LOST_IP:
-      Serial.println("ETH Lost IP");
+      Serial.println("ETH IP verloren");
       ethConnected = false;
       break;
 
     case ARDUINO_EVENT_ETH_DISCONNECTED:
-      Serial.println("ETH Disconnected");
+      Serial.println("ETH getrennt");
       ethConnected = false;
       break;
 
     case ARDUINO_EVENT_ETH_STOP:
-      Serial.println("ETH Stopped");
+      Serial.println("ETH gestoppt");
       ethConnected = false;
       break;
 
@@ -64,21 +97,32 @@ void onEvent(arduino_event_id_t event, arduino_event_info_t info) {
   }
 }
 
+
+// ==============================
+// Setup
+// ==============================
+
 void setup() {
 
   Serial.begin(115200);
+
   delay(3000);
 
   Serial.println();
-  Serial.println("==============================");
-  Serial.println("ESP32-S3 W5500 NATIVE TEST");
-  Serial.println("==============================");
+  Serial.println("================================");
+  Serial.println("ESP32-S3 ROLLLADEN CONTROLLER");
+  Serial.println("Ethernet + MQTT Test");
+  Serial.println("================================");
 
-  Network.onEvent(onEvent);
+  // --------------------------------
+  // Ethernet starten
+  // --------------------------------
+
+  Network.onEvent(onNetworkEvent);
 
   Serial.println("Starte W5500...");
 
-  bool result = ETH.begin(
+  bool ethResult = ETH.begin(
     ETH_PHY_TYPE,
     ETH_PHY_ADDR,
     ETH_PHY_CS,
@@ -91,31 +135,76 @@ void setup() {
   );
 
   Serial.print("ETH.begin(): ");
-  Serial.println(result ? "OK" : "FEHLER");
+  Serial.println(ethResult ? "OK" : "FEHLER");
 
-  delay(1000);
-
-  Serial.println("Setze statische IP...");
-
+  // Statische IP
   if (ETH.config(local_ip, gateway, subnet, dns)) {
-    Serial.println("ETH.config(): OK");
+    Serial.println("Statische IP: OK");
   } else {
-    Serial.println("ETH.config(): FEHLER");
+    Serial.println("Statische IP: FEHLER");
   }
+
+  // --------------------------------
+  // Warten bis Ethernet aktiv ist
+  // --------------------------------
+
+  Serial.println("Warte auf Ethernet...");
+
+  unsigned long start = millis();
+
+  while (!ethConnected && millis() - start < 15000) {
+    delay(100);
+  }
+
+  if (!ethConnected) {
+    Serial.println("Ethernet nicht verbunden!");
+    return;
+  }
+
+  Serial.println("Ethernet ist bereit.");
+
+  // --------------------------------
+  // Home Assistant Gerät
+  // --------------------------------
+
+  device.setName("ESP32-S3 Rollladen Controller");
+  device.setSoftwareVersion("1.0.0");
+
+  statusSensor.setName("Status");
+  statusSensor.setIcon("mdi:lan-connect");
+
+  // --------------------------------
+  // MQTT
+  // --------------------------------
+
+  Serial.println();
+  Serial.println("Starte MQTT...");
+
+  mqtt.begin(
+    config.mqttConfig.host.c_str(),
+    config.mqttConfig.port,
+    config.mqttConfig.username.c_str(),
+    config.mqttConfig.password.c_str()
+  );
+
+  Serial.println("MQTT gestartet");
+
+  statusSensor.setValue("online");
+
+  Serial.println();
+  Serial.println("================================");
+  Serial.println("SETUP FERTIG");
+  Serial.println("================================");
 }
+
+
+// ==============================
+// Loop
+// ==============================
 
 void loop() {
 
-  Serial.print("Link: ");
+  mqtt.loop();
 
-  if (ETH.linkUp()) {
-    Serial.print("ON");
-  } else {
-    Serial.print("OFF");
-  }
-
-  Serial.print(" | IP: ");
-  Serial.println(ETH.localIP());
-
-  delay(2000);
+  delay(10);
 }
