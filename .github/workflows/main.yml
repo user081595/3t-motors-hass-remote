@@ -12,17 +12,21 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Build with PlatformIO
-        uses: n-a-n/platformio-action@v1
+      - name: Setup Python
+        uses: actions/setup-python@v6
         with:
-          project-dir: .
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build firmware
+        run: pio run -e waveshare-esp32-s3-eth
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
           name: esp32-firmware
-          path: |
-            .pio/build/waveshare-esp32-s3-eth/firmware.bin
-            .pio/build/waveshare-esp32-s3-eth/firmware.elf
+          path: .pio/build/waveshare-esp32-s3-eth/firmware.bin
