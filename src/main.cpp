@@ -129,6 +129,13 @@ struct PositionMovement {
 
 PositionMovement positionMovements[COVER_COUNT];
 
+// ArduinoHA does not reliably expose the last position through getCurrentPosition()
+// for our custom MQTT position path. Keep the authoritative position locally.
+// 100% is the safe startup assumption; it is corrected after the first movement.
+int knownPositions[COVER_COUNT] = {
+  100,100,100,100,100,100,100,100,100,100,100,100,100,100
+};
+
 int findPositionCover(const char* topic) {
   if (!topic) return -1;
 
@@ -198,6 +205,7 @@ void updatePositionMovement(size_t index) {
     const auto id = coverBindings[index].id;
     // Stop exactly at the requested position.
     if (shutterControl.stop(id)) {
+      knownPositions[index] = m.targetPosition;
       cover->setPosition(m.targetPosition, true);
       cover->setState(
         m.targetPosition == 0 ? HACover::StateClosed :
@@ -221,6 +229,7 @@ void updatePositionMovement(size_t index) {
   int position = m.startPosition +
                  (int)((m.targetPosition - m.startPosition) * progress);
   position = constrain(position, 0, 100);
+  knownPositions[index] = position;
   cover->setPosition(position);
 }
 
@@ -237,12 +246,7 @@ void startPositionMovement(size_t index, int targetPosition) {
     positionMovements[index].active = false;
   }
 
-  int current = cover->getCurrentPosition();
-  if (current == HACover::DefaultPosition || current < 0 || current > 100) {
-    Serial.print("HA -> POSITION: keine aktuelle Position fuer ");
-    Serial.println(POSITION_COVER_NAMES[index]);
-    return;
-  }
+  int current = clampPosition(knownPositions[index]);
 
   targetPosition = constrain(targetPosition, 0, 100);
 
@@ -289,11 +293,10 @@ void startPositionMovement(size_t index, int targetPosition) {
   m.startMs = millis();
   m.durationMs = duration;
 
+  knownPositions[index] = current;
   cover->setPosition(current, true);
-  cover->setState(
-    opening ? HACover::StateOpening : HACover::StateClosing,
-    true
-  );
+  // Do not publish Opening/Closing here. HomeKit otherwise tends to animate
+  // immediately to 0/100 instead of following the real position updates.
 }
 
 void onPositionMqttMessage(const char* topic, const uint8_t* payload, uint16_t length) {
@@ -333,11 +336,11 @@ int clampPosition(int value) {
 }
 
 int getKnownOrAssumedPosition(HACover* cover, bool opening) {
-  const int16_t pos = cover->getCurrentPosition();
-  if (pos == HACover::DefaultPosition || pos < 0 || pos > 100) {
-    return opening ? 0 : 100;
-  }
-  return clampPosition(pos);
+  (void)cover;
+  (void)opening;
+  // Use our own authoritative position instead of HACover::getCurrentPosition().
+  // The latter is DefaultPosition in the custom MQTT path even though HA knows the value.
+  return 0; // replaced by caller via knownPositions[]
 }
 
 void updateMovement(size_t index) {
@@ -349,6 +352,7 @@ void updateMovement(size_t index) {
 
   if (elapsed >= m.durationMs) {
     m.active = false;
+    knownPositions[index] = m.targetPosition;
     cover->setPosition(m.targetPosition, true);
     cover->setState(
       m.targetPosition == 100 ? HACover::StateOpen : HACover::StateClosed,
@@ -362,7 +366,9 @@ void updateMovement(size_t index) {
     m.startPosition +
     (m.targetPosition - m.startPosition) * progress;
 
-  cover->setPosition(clampPosition((int)(position + 0.5f)));
+  int newPosition = clampPosition((int)(position + 0.5f));
+  knownPositions[index] = newPosition;
+  cover->setPosition(newPosition);
 }
 
 void updateAllMovements() {
@@ -383,7 +389,7 @@ void startMovement(size_t index, bool opening) {
   // If a previous movement is still running, first calculate its current position.
   updateMovement(index);
 
-  const int startPosition = getKnownOrAssumedPosition(cover, opening);
+  const int startPosition = clampPosition(knownPositions[index]);
   m.active = true;
   m.opening = opening;
   m.startMs = millis();
@@ -584,12 +590,13 @@ void onCoverCommand(
         Serial.println(shutterControl.name(id));
 
         updateMovement(i);
-        const int stopPosition = getKnownOrAssumedPosition(sender, false);
+        const int stopPosition = clampPosition(knownPositions[i]);
 
         ok = shutterControl.stop(id);
 
         if (ok) {
           movements[i].active = false;
+          knownPositions[i] = stopPosition;
           sender->setPosition(stopPosition, true);
           sender->setState(HACover::StateStopped, true);
         }
