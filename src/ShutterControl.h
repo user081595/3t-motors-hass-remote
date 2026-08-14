@@ -59,6 +59,7 @@ private:
   };
 
   static const CodeSet codes[];
+  static constexpr size_t CODE_COUNT = 14;
 
   // Fahrzeiten aus der bisherigen Homebridge/Broadlink-Konfiguration.
   // Index entspricht ShutterId.
@@ -215,7 +216,7 @@ public:
 
   bool open(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
+        (int)id >= (int)CODE_COUNT) {
       return false;
     }
 
@@ -227,7 +228,7 @@ public:
 
   bool close(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
+        (int)id >= (int)CODE_COUNT) {
       return false;
     }
 
@@ -239,7 +240,7 @@ public:
 
   bool stop(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
+        (int)id >= (int)CODE_COUNT) {
       return false;
     }
 
