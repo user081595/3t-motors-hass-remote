@@ -1,13 +1,14 @@
-#include <Arduino.h>
 #include <SPI.h>
 #include <Ethernet.h>
 
-#define W5500_CS   14
-#define W5500_RST   9
-#define W5500_INT  10
-#define W5500_MISO 12
-#define W5500_MOSI 11
-#define W5500_SCK  13
+#define W5500_CS    14
+#define W5500_MISO  12
+#define W5500_MOSI  11
+#define W5500_SCK   13
+
+byte mac[] = {
+  0xA5, 0x5C, 0xDB, 0xDF, 0x7B, 0x37
+};
 
 void setup() {
   Serial.begin(115200);
@@ -15,14 +16,8 @@ void setup() {
 
   Serial.println();
   Serial.println("==============================");
-  Serial.println("W5500 HARDWARE TEST V2");
+  Serial.println("WAVESHARE ETHERNET TEST");
   Serial.println("==============================");
-
-  pinMode(W5500_RST, OUTPUT);
-  digitalWrite(W5500_RST, LOW);
-  delay(100);
-  digitalWrite(W5500_RST, HIGH);
-  delay(200);
 
   SPI.begin(
     W5500_SCK,
@@ -33,30 +28,48 @@ void setup() {
 
   Ethernet.init(W5500_CS);
 
-  Serial.println("Prüfe W5500...");
+  Serial.println("W5500 wird gestartet...");
+
+  Serial.print("Hardware: ");
 
   if (Ethernet.hardwareStatus() == EthernetW5500) {
-    Serial.println("W5500: GEFUNDEN");
+    Serial.println("W5500 GEFUNDEN");
   } else {
-    Serial.println("W5500: NICHT GEFUNDEN");
+    Serial.println("W5500 NICHT GEFUNDEN");
   }
 
-  Serial.println("Prüfe LAN-Link...");
+  Serial.print("LAN-Link: ");
 
-  EthernetLinkStatus link = Ethernet.linkStatus();
-
-  if (link == LinkON) {
-    Serial.println("LAN-Link: ON");
-  } else if (link == LinkOFF) {
-    Serial.println("LAN-Link: OFF");
+  if (Ethernet.linkStatus() == LinkON) {
+    Serial.println("ON");
+  } else if (Ethernet.linkStatus() == LinkOFF) {
+    Serial.println("OFF");
   } else {
-    Serial.println("LAN-Link: UNKNOWN");
+    Serial.println("UNKNOWN");
   }
 
-  Serial.println("Test beendet.");
+  Serial.println("Starte DHCP...");
+
+  int result = Ethernet.begin(mac);
+
+  if (result == 0) {
+    Serial.println("DHCP fehlgeschlagen!");
+  } else {
+    Serial.println("DHCP erfolgreich!");
+  }
+
+  Serial.print("IP: ");
+  Serial.println(Ethernet.localIP());
 }
 
 void loop() {
-  Serial.println("ESP läuft...");
+  Serial.print("Link: ");
+
+  if (Ethernet.linkStatus() == LinkON) {
+    Serial.println("ON");
+  } else {
+    Serial.println("OFF");
+  }
+
   delay(2000);
 }
