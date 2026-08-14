@@ -4,9 +4,10 @@
 #include <ShutterControl.cpp>
 #include <ShutterRead.h>
 #include <vector>
-#include <WiFi.h>
+#include <ETH.h>
+#include <Network.h>
 
-WiFiClient client;
+NetworkClient client;
 
 Config config;
 
@@ -98,17 +99,24 @@ void setupShutters() {
 void setup() {
   Serial.begin(115200);
 
-  WiFi.begin(
-    config.wifiConfig.ssid,
-    config.wifiConfig.password
-  );
+    Network.onEvent([](arduino_event_id_t event, arduino_event_info_t info) {
+    if (event == ARDUINO_EVENT_ETH_GOT_IP) {
+      Serial.print("Ethernet connected! IP: ");
+      Serial.println(ETH.localIP());
+    }
+  });
 
-  Serial.print("Connecting to WiFi");
-  while(WiFi.status() != WL_CONNECTED){
-    Serial.print(".");
-    delay(100);
-  }
-  Serial.print("Successfully connected to WiFi");
+  ETH.begin(
+    ETH_PHY_W5500,
+    1,
+    14,        // CS
+    10,        // INT
+    9,         // RST
+    SPI2_HOST,
+    13,        // SCK
+    12,        // MISO
+    11         // MOSI
+  );
 
   device.setName(config.deviceId.c_str());
   device.setSoftwareVersion("1.0.0");
