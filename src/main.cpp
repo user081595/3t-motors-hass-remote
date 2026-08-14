@@ -584,11 +584,11 @@ void onCoverCommand(
         Serial.print("HA -> OPEN -> ");
         Serial.println(shutterControl.name(id));
 
-        ok = shutterControl.open(id);
-
-        if (ok) {
-          startMovement(i, true);
-        }
+        // startMovement() performs the actual RF transmission.
+        // Do NOT send OPEN here as well, otherwise the CC1101 receives
+        // the command twice and the second transmission can fail (-16).
+        startMovement(i, true);
+        ok = true;
         break;
       }
 
@@ -596,11 +596,10 @@ void onCoverCommand(
         Serial.print("HA -> CLOSE -> ");
         Serial.println(shutterControl.name(id));
 
-        ok = shutterControl.close(id);
-
-        if (ok) {
-          startMovement(i, false);
-        }
+        // startMovement() performs the actual RF transmission.
+        // Do NOT send CLOSE here as well.
+        startMovement(i, false);
+        ok = true;
         break;
       }
 
