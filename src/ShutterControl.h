@@ -59,17 +59,11 @@ private:
   };
 
   static const CodeSet codes[];
-  static constexpr size_t CODE_COUNT = 14;
 
-  // Fahrzeiten wie in der bisherigen Homebridge-Konfiguration.
-  static constexpr uint32_t OPEN_DURATIONS_MS[CODE_COUNT] = {
-    27000, 27000, 27000, 27000, 27000, 27000, 27000,
-    27000, 27000, 27000, 27000, 30000, 30000, 27000
-  };
-  static constexpr uint32_t CLOSE_DURATIONS_MS[CODE_COUNT] = {
-    17000, 17000, 17000, 17000, 17000, 17000, 17000,
-    17000, 17000, 17000, 17000, 23000, 17000, 17000
-  };
+  // Fahrzeiten aus der bisherigen Homebridge/Broadlink-Konfiguration.
+  // Index entspricht ShutterId.
+  static const uint32_t openDurationMs[];
+  static const uint32_t closeDurationMs[];
 
   static uint32_t broadlinkUnitToUs(uint16_t unit) {
     return (uint32_t)((unit * 8192UL + 134) / 269UL);
@@ -94,13 +88,13 @@ private:
       return (uint8_t)((nibble(hex[pos]) << 4) | nibble(hex[pos + 1]));
     };
 
-    if (hexByte(0) != 0xB1 || hexByte(1) != 0xC0) {
+    if (hexByte(0) != 0xB1 || hexByte(2) != 0xC0) {
       Serial.println("CC1101: kein B1C0-RF-Code");
       return false;
     }
 
     const uint16_t payloadLength =
-      (uint16_t)hexByte(2) | ((uint16_t)hexByte(3) << 8);
+      (uint16_t)hexByte(4) | ((uint16_t)hexByte(6) << 8);
 
     if ((size_t)payloadLength + 4 > byteLen || byteLen < 10) {
       Serial.println("CC1101: ungültiges Broadlink-Längenfeld");
@@ -117,44 +111,7 @@ private:
     // Broadlink stores 00 + 16-bit big-endian value.
     // 0005dc is the usual 1500-unit end gap.
 
-    // Always force the CC1101 into a clean standby state before a new
-    // direct transmission. This is important when OPEN/CLOSE/STOP are
-    // sent repeatedly: otherwise the next SPI register write can return
-    // RadioLib error -16 (SPI write verification failed).
-    int16_t state = radio.packetMode();
-    if (state != RADIOLIB_ERR_NONE) {
-      Serial.print("CC1101 packetMode Fehler: ");
-      Serial.println(state);
-    }
-
-    state = radio.standby();
-    if (state != RADIOLIB_ERR_NONE) {
-      Serial.print("CC1101 standby Fehler: ");
-      Serial.println(state);
-    }
-
-    delay(2);
-
-    state = radio.transmitDirectAsync();
-
-    // One automatic recovery for RadioLib -16. The first transmission
-    // may work while a following transmission can fail if the CC1101
-    // state machine was not completely back in standby.
-    if (state == RADIOLIB_ERR_SPI_WRITE_FAILED) {
-      Serial.println("CC1101 -16 -> Radio wird neu synchronisiert...");
-
-      radio.packetMode();
-      radio.standby();
-      delay(5);
-
-      state = radio.setOOK(true);
-      if (state == RADIOLIB_ERR_NONE) {
-        radio.disableSyncWordFiltering();
-        radio.setCrcFiltering(false);
-        delay(2);
-        state = radio.transmitDirectAsync();
-      }
-    }
+    int16_t state = radio.transmitDirectAsync();
 
     if (state != RADIOLIB_ERR_NONE) {
       Serial.print("CC1101 TX Start Fehler: ");
@@ -201,22 +158,9 @@ private:
     digitalWrite(CC1101_DATA, LOW);
     delayMicroseconds(200);
 
-    // Leave direct mode and explicitly enter standby before the next
-    // OPEN/CLOSE/STOP command. This prevents the CC1101 from remaining
-    // in a partially active direct-mode state.
-    int16_t endState = radio.packetMode();
-    if (endState != RADIOLIB_ERR_NONE) {
-      Serial.print("CC1101 packetMode Ende Fehler: ");
-      Serial.println(endState);
-    }
+    // Leave direct mode before anything else uses the CC1101.
+    radio.packetMode();
 
-    endState = radio.standby();
-    if (endState != RADIOLIB_ERR_NONE) {
-      Serial.print("CC1101 standby Ende Fehler: ");
-      Serial.println(endState);
-    }
-
-    delay(2);
     return true;
   }
 
@@ -227,6 +171,7 @@ public:
     Serial.println("CC1101 RADIOLIB TX SETUP");
     Serial.println("================================");
     Serial.println("Nur SENDEN - kein RX");
+    Serial.println("CC1101 CS: GPIO1");
 
     pinMode(CC1101_DATA, OUTPUT);
     digitalWrite(CC1101_DATA, LOW);
@@ -270,7 +215,7 @@ public:
 
   bool open(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)CODE_COUNT) {
+        (int)id >= 14) {
       return false;
     }
 
@@ -282,7 +227,7 @@ public:
 
   bool close(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)CODE_COUNT) {
+        (int)id >= 14) {
       return false;
     }
 
@@ -294,7 +239,7 @@ public:
 
   bool stop(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)CODE_COUNT) {
+        (int)id >= 14) {
       return false;
     }
 
@@ -305,20 +250,26 @@ public:
   }
 
   uint32_t openDurationMsFor(ShutterId id) const {
-    int i = (int)id;
-    if (i < 0 || i >= (int)CODE_COUNT) return 27000;
-    return OPEN_DURATIONS_MS[i];
+    return openDurationMs[(int)id];
   }
 
   uint32_t closeDurationMsFor(ShutterId id) const {
-    int i = (int)id;
-    if (i < 0 || i >= (int)CODE_COUNT) return 17000;
-    return CLOSE_DURATIONS_MS[i];
+    return closeDurationMs[(int)id];
   }
 
   const char* name(ShutterId id) const {
     return codes[id].name;
   }
+};
+
+const uint32_t ShutterControl::openDurationMs[] = {
+  27000, 27000, 27000, 27000, 27000, 27000, 27000,
+  27000, 27000, 27000, 27000, 30000, 30000, 27000
+};
+
+const uint32_t ShutterControl::closeDurationMs[] = {
+  17000, 17000, 17000, 17000, 17000, 17000, 17000,
+  17000, 17000, 17000, 17000, 23000, 17000, 17000
 };
 
 // ============================================================
