@@ -1,82 +1,121 @@
 #include <Arduino.h>
-#include <SPI.h>
-#include <Ethernet.h>
+#include <ETH.h>
+#include <Network.h>
 
-#define W5500_CS    14
-#define W5500_MISO  12
-#define W5500_MOSI  11
-#define W5500_SCK   13
+#define ETH_PHY_TYPE   ETH_PHY_W5500
+#define ETH_PHY_ADDR   1
 
-byte mac[] = {
-  0xA5, 0x5C, 0xDB, 0xDF, 0x7B, 0x37
-};
+#define ETH_PHY_CS     14
+#define ETH_PHY_IRQ    10
+#define ETH_PHY_RST     9
 
-// Test-IP
-IPAddress ip(192, 168, 188, 250);
-IPAddress dns(192, 168, 188, 1);
+#define ETH_SPI_SCK    13
+#define ETH_SPI_MISO   12
+#define ETH_SPI_MOSI   11
+
+IPAddress local_ip(192, 168, 188, 250);
 IPAddress gateway(192, 168, 188, 1);
 IPAddress subnet(255, 255, 255, 0);
+IPAddress dns(192, 168, 188, 1);
+
+bool ethConnected = false;
+
+void onEvent(arduino_event_id_t event, arduino_event_info_t info) {
+
+  switch (event) {
+
+    case ARDUINO_EVENT_ETH_START:
+      Serial.println("ETH Started");
+      ETH.setHostname("esp32-s3-shutter");
+      break;
+
+    case ARDUINO_EVENT_ETH_CONNECTED:
+      Serial.println("ETH Connected");
+      break;
+
+    case ARDUINO_EVENT_ETH_GOT_IP:
+      Serial.println("ETH Got IP!");
+      Serial.print("IP: ");
+      Serial.println(ETH.localIP());
+      Serial.print("Gateway: ");
+      Serial.println(ETH.gatewayIP());
+      Serial.print("Subnet: ");
+      Serial.println(ETH.subnetMask());
+      ethConnected = true;
+      break;
+
+    case ARDUINO_EVENT_ETH_LOST_IP:
+      Serial.println("ETH Lost IP");
+      ethConnected = false;
+      break;
+
+    case ARDUINO_EVENT_ETH_DISCONNECTED:
+      Serial.println("ETH Disconnected");
+      ethConnected = false;
+      break;
+
+    case ARDUINO_EVENT_ETH_STOP:
+      Serial.println("ETH Stopped");
+      ethConnected = false;
+      break;
+
+    default:
+      break;
+  }
+}
 
 void setup() {
+
   Serial.begin(115200);
   delay(3000);
 
   Serial.println();
   Serial.println("==============================");
-  Serial.println("WAVESHARE ETHERNET STATIC TEST");
+  Serial.println("ESP32-S3 W5500 NATIVE TEST");
   Serial.println("==============================");
 
-  SPI.begin(
-    W5500_SCK,
-    W5500_MISO,
-    W5500_MOSI,
-    W5500_CS
+  Network.onEvent(onEvent);
+
+  Serial.println("Starte W5500...");
+
+  bool result = ETH.begin(
+    ETH_PHY_TYPE,
+    ETH_PHY_ADDR,
+    ETH_PHY_CS,
+    ETH_PHY_IRQ,
+    ETH_PHY_RST,
+    SPI2_HOST,
+    ETH_SPI_SCK,
+    ETH_SPI_MISO,
+    ETH_SPI_MOSI
   );
 
-  Ethernet.init(W5500_CS);
-
-  Serial.println("Starte W5500 mit statischer IP...");
-
-  Ethernet.begin(mac, ip, dns, gateway, subnet);
+  Serial.print("ETH.begin(): ");
+  Serial.println(result ? "OK" : "FEHLER");
 
   delay(1000);
 
-  Serial.print("Hardware: ");
+  Serial.println("Setze statische IP...");
 
-  if (Ethernet.hardwareStatus() == EthernetW5500) {
-    Serial.println("W5500 GEFUNDEN");
+  if (ETH.config(local_ip, gateway, subnet, dns)) {
+    Serial.println("ETH.config(): OK");
   } else {
-    Serial.println("W5500 NICHT GEFUNDEN");
+    Serial.println("ETH.config(): FEHLER");
   }
-
-  Serial.print("Link: ");
-
-  if (Ethernet.linkStatus() == LinkON) {
-    Serial.println("ON");
-  } else {
-    Serial.println("OFF");
-  }
-
-  Serial.print("IP-Adresse: ");
-  Serial.println(Ethernet.localIP());
-
-  Serial.print("Gateway: ");
-  Serial.println(Ethernet.gatewayIP());
-
-  Serial.println("Test beendet.");
 }
 
 void loop() {
+
   Serial.print("Link: ");
 
-  if (Ethernet.linkStatus() == LinkON) {
-    Serial.print("ON  ");
+  if (ETH.linkUp()) {
+    Serial.print("ON");
   } else {
-    Serial.print("OFF ");
+    Serial.print("OFF");
   }
 
-  Serial.print("IP: ");
-  Serial.println(Ethernet.localIP());
+  Serial.print(" | IP: ");
+  Serial.println(ETH.localIP());
 
   delay(2000);
 }
