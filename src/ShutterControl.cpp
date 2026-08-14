@@ -1,6 +1,12 @@
 #include "ELECHOUSE_CC1101_SRC_DRV.h"
-#define PIN_RECEIVE 33
-#define PIN_SEND 32
+
+#define PIN_RECEIVE 2
+#define PIN_SEND 3
+
+#define CC1101_SCK 18
+#define CC1101_MISO 16
+#define CC1101_MOSI 17
+#define CC1101_CS 21
 
 class ShutterControl {
   private:
