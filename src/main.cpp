@@ -203,24 +203,41 @@ void updatePositionMovement(size_t index) {
 
   if (elapsed >= m.durationMs) {
     const auto id = coverBindings[index].id;
-    // Stop exactly at the requested position.
-    if (shutterControl.stop(id)) {
-      knownPositions[index] = m.targetPosition;
-      cover->setPosition(m.targetPosition, true);
-      cover->setState(
-        m.targetPosition == 0 ? HACover::StateClosed :
-        m.targetPosition == 100 ? HACover::StateOpen :
-        HACover::StateStopped,
-        true
-      );
-      Serial.print("HA -> POSITION erreicht -> ");
-      Serial.print(POSITION_COVER_NAMES[index]);
-      Serial.print(" = ");
-      Serial.print(m.targetPosition);
-      Serial.println("%");
-    } else {
-      Serial.println("CC1101: POSITION STOP SENDUNG FEHLGESCHLAGEN");
+
+    // Bei den echten Endpositionen NICHT STOP senden.
+    // Der Motor soll die komplette 27s/17s bis zum mechanischen
+    // Endanschlag laufen. STOP ist nur bei Zwischenpositionen nötig.
+    const bool isEndPosition =
+      (m.targetPosition == 0 || m.targetPosition == 100);
+
+    if (!isEndPosition) {
+      if (!shutterControl.stop(id)) {
+        Serial.println("CC1101: POSITION STOP SENDUNG FEHLGESCHLAGEN");
+        m.active = false;
+        return;
+      }
     }
+
+    knownPositions[index] = m.targetPosition;
+    cover->setPosition(m.targetPosition, true);
+    cover->setState(
+      m.targetPosition == 0 ? HACover::StateClosed :
+      m.targetPosition == 100 ? HACover::StateOpen :
+      HACover::StateStopped,
+      true
+    );
+
+    Serial.print("HA -> POSITION erreicht -> ");
+    Serial.print(POSITION_COVER_NAMES[index]);
+    Serial.print(" = ");
+    Serial.print(m.targetPosition);
+    Serial.print("%");
+    if (isEndPosition) {
+      Serial.println(" (Endposition, kein STOP)");
+    } else {
+      Serial.println(" (STOP)");
+    }
+
     m.active = false;
     return;
   }
