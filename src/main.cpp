@@ -22,11 +22,6 @@ Config config;
 #define ETH_SPI_MISO   12
 #define ETH_SPI_MOSI   11
 
-
-// ============================================================
-// Netzwerk
-// ============================================================
-
 IPAddress local_ip(192, 168, 188, 250);
 IPAddress gateway(192, 168, 188, 1);
 IPAddress subnet(255, 255, 255, 0);
@@ -34,9 +29,8 @@ IPAddress dns(192, 168, 188, 1);
 
 bool ethConnected = false;
 
-
 // ============================================================
-// MQTT / Home Assistant
+// Home Assistant / MQTT
 // ============================================================
 
 NetworkClient client;
@@ -46,104 +40,108 @@ byte mac[] = {
 };
 
 HADevice device(mac, sizeof(mac));
-
 HAMqtt mqtt(client, device);
 
 HASensor statusSensor("status");
 
-
-// ============================================================
-// CC1101 / Rollladen
-// ============================================================
-
 ShutterControl shutterControl;
 
+// ============================================================
+// HA Covers
+// ============================================================
+
+HACover coverBuero("buero_rollo");
+HACover coverSchlafzimmer2("schlafzimmer2");
+HACover coverSchlafzimmer("schlafzimmer");
+HACover coverGaestezimmer2("gaestezimmer_rollo2");
+HACover coverKueche1("kueche_rollo1");
+HACover coverKueche2("kueche_rollo2");
+HACover coverBad("bad_rollo");
+HACover coverSchlafzimmerRollo1("schlafzimmer_rollo1");
+HACover coverWz4("wz4");
+HACover coverWohnzimmerTuer("wohnzimmer_rollo_tuer");
+HACover coverWohnzimmer2("wohnzimmer_rollo2");
+HACover coverWohnzimmer3("wohnzimmer_rollo3");
+HACover coverSchlafzimmer1("schlafzimmer1");
+HACover coverWohnzimmer("wohnzimmer");
+
+struct CoverBinding {
+  HACover* cover;
+  ShutterControl::ShutterId id;
+};
+
+CoverBinding coverBindings[] = {
+  { &coverBuero,             ShutterControl::Buero_Rollo },
+  { &coverSchlafzimmer2,     ShutterControl::Schlafzimmer2 },
+  { &coverSchlafzimmer,      ShutterControl::Schlafzimmer },
+  { &coverGaestezimmer2,     ShutterControl::Gaestezimmer_Rollo2 },
+  { &coverKueche1,           ShutterControl::Kueche_Rollo1 },
+  { &coverKueche2,           ShutterControl::Kueche_Rollo2 },
+  { &coverBad,               ShutterControl::Bad_Rollo },
+  { &coverSchlafzimmerRollo1,ShutterControl::Schlafzimmer_Rollo1 },
+  { &coverWz4,               ShutterControl::wz4 },
+  { &coverWohnzimmerTuer,    ShutterControl::Wohnzimmer_Rollo_Tuer },
+  { &coverWohnzimmer2,       ShutterControl::Wohnzimmer_Rollo2 },
+  { &coverWohnzimmer3,       ShutterControl::Wohnzimmer_Rollo3 },
+  { &coverSchlafzimmer1,     ShutterControl::Schlafzimmer1 },
+  { &coverWohnzimmer,        ShutterControl::Wohnzimmer }
+};
+
+const size_t COVER_COUNT =
+  sizeof(coverBindings) / sizeof(coverBindings[0]);
 
 // ============================================================
-// Ethernet Events
+// Ethernet events
 // ============================================================
 
 void onNetworkEvent(
   arduino_event_id_t event,
   arduino_event_info_t info
 ) {
-
   switch (event) {
 
     case ARDUINO_EVENT_ETH_START:
-
       Serial.println("ETH gestartet");
-
       ETH.setHostname("esp32-s3-shutter");
-
       break;
-
 
     case ARDUINO_EVENT_ETH_CONNECTED:
-
       Serial.println("ETH verbunden");
-
       break;
-
 
     case ARDUINO_EVENT_ETH_GOT_IP:
-
       Serial.println("ETH IP erhalten");
-
-      Serial.print("IP: ");
-      Serial.println(ETH.localIP());
-
-      Serial.print("Gateway: ");
-      Serial.println(ETH.gatewayIP());
-
-      Serial.print("Subnet: ");
-      Serial.println(ETH.subnetMask());
-
+      Serial.print("IP: ");      Serial.println(ETH.localIP());
+      Serial.print("Gateway: "); Serial.println(ETH.gatewayIP());
+      Serial.print("Subnet: ");  Serial.println(ETH.subnetMask());
       ethConnected = true;
-
       break;
-
 
     case ARDUINO_EVENT_ETH_LOST_IP:
-
       Serial.println("ETH IP verloren");
-
       ethConnected = false;
-
       break;
-
 
     case ARDUINO_EVENT_ETH_DISCONNECTED:
-
       Serial.println("ETH getrennt");
-
       ethConnected = false;
-
       break;
-
 
     case ARDUINO_EVENT_ETH_STOP:
-
       Serial.println("ETH gestoppt");
-
       ethConnected = false;
-
       break;
 
-
     default:
-
       break;
   }
 }
 
-
 // ============================================================
-// MQTT Connected Callback
+// MQTT events
 // ============================================================
 
 void onMqttConnected() {
-
   Serial.println();
   Serial.println("********************************");
   Serial.println("MQTT: VERBUNDEN");
@@ -152,13 +150,7 @@ void onMqttConnected() {
   statusSensor.setValue("online");
 }
 
-
-// ============================================================
-// MQTT Disconnected Callback
-// ============================================================
-
 void onMqttDisconnected() {
-
   Serial.println();
   Serial.println("********************************");
   Serial.println("MQTT: GETRENNT");
@@ -167,21 +159,16 @@ void onMqttDisconnected() {
   statusSensor.setValue("offline");
 }
 
-
-// ============================================================
-// MQTT State Callback
-// ============================================================
-
-void onMqttStateChanged(
-  HAMqtt::ConnectionState state
-) {
-
+void onMqttStateChanged(HAMqtt::ConnectionState state) {
   Serial.print("MQTT State: ");
 
   switch (state) {
-
     case HAMqtt::StateConnecting:
       Serial.println("CONNECTING");
+      break;
+
+    case HAMqtt::StateConnected:
+      Serial.println("CONNECTED");
       break;
 
     case HAMqtt::StateConnectionTimeout:
@@ -198,10 +185,6 @@ void onMqttStateChanged(
 
     case HAMqtt::StateDisconnected:
       Serial.println("DISCONNECTED");
-      break;
-
-    case HAMqtt::StateConnected:
-      Serial.println("CONNECTED");
       break;
 
     case HAMqtt::StateBadProtocol:
@@ -230,6 +213,88 @@ void onMqttStateChanged(
   }
 }
 
+// ============================================================
+// Cover command callback
+// ============================================================
+
+void onCoverCommand(
+  HACover::CoverCommand command,
+  HACover* sender
+) {
+  for (size_t i = 0; i < COVER_COUNT; i++) {
+
+    if (coverBindings[i].cover != sender) {
+      continue;
+    }
+
+    const auto id = coverBindings[i].id;
+
+    bool ok = false;
+
+    switch (command) {
+
+      case HACover::CommandOpen:
+        Serial.print("HA -> OPEN -> ");
+        Serial.println(shutterControl.name(id));
+
+        ok = shutterControl.open(id);
+
+        if (ok) {
+          sender->setState(HACover::StateOpen);
+        }
+        break;
+
+      case HACover::CommandClose:
+        Serial.print("HA -> CLOSE -> ");
+        Serial.println(shutterControl.name(id));
+
+        ok = shutterControl.close(id);
+
+        if (ok) {
+          sender->setState(HACover::StateClosed);
+        }
+        break;
+
+      case HACover::CommandStop:
+        Serial.print("HA -> STOP -> ");
+        Serial.println(shutterControl.name(id));
+
+        ok = shutterControl.stop(id);
+
+        if (ok) {
+          sender->setState(HACover::StateStopped);
+        }
+        break;
+
+      default:
+        break;
+    }
+
+    if (!ok) {
+      Serial.println("CC1101: SENDUNG FEHLGESCHLAGEN");
+    }
+
+    return;
+  }
+}
+
+// ============================================================
+// Cover setup
+// ============================================================
+
+void setupCover(
+  HACover& cover,
+  const char* icon = "mdi:window-shutter"
+) {
+  cover.setDeviceClass("shutter");
+  cover.setIcon(icon);
+
+  // There is no position feedback from the 433 MHz motors.
+  // Therefore HA should treat commands optimistically.
+  cover.setOptimistic(true);
+
+  cover.onCommand(onCoverCommand);
+}
 
 // ============================================================
 // SETUP
@@ -238,19 +303,18 @@ void onMqttStateChanged(
 void setup() {
 
   Serial.begin(115200);
-
   delay(3000);
 
   Serial.println();
   Serial.println("================================");
   Serial.println("ESP32-S3 ROLLLADEN CONTROLLER");
   Serial.println("Ethernet + MQTT + CC1101");
+  Serial.println("Broadlink RF -> CC1101");
   Serial.println("================================");
 
-
-  // ==========================================================
+  // ----------------------------------------------------------
   // Ethernet
-  // ==========================================================
+  // ----------------------------------------------------------
 
   Network.onEvent(onNetworkEvent);
 
@@ -270,17 +334,7 @@ void setup() {
   );
 
   Serial.print("ETH.begin(): ");
-
-  if (ethResult) {
-    Serial.println("OK");
-  } else {
-    Serial.println("FEHLER");
-  }
-
-
-  // ==========================================================
-  // Statische IP
-  // ==========================================================
+  Serial.println(ethResult ? "OK" : "FEHLER");
 
   if (ETH.config(
         local_ip,
@@ -288,109 +342,70 @@ void setup() {
         subnet,
         dns
       )) {
-
     Serial.println("Statische IP: OK");
-
   } else {
-
     Serial.println("Statische IP: FEHLER");
   }
-
-
-  // ==========================================================
-  // Auf Ethernet warten
-  // ==========================================================
 
   Serial.println("Warte auf Ethernet...");
 
   unsigned long start = millis();
 
-  while (
-    !ethConnected &&
-    (millis() - start < 15000)
-  ) {
-
+  while (!ethConnected && millis() - start < 15000) {
     delay(100);
   }
 
-
   if (!ethConnected) {
-
-    Serial.println();
     Serial.println("!!! ETHERNET NICHT VERBUNDEN !!!");
-
     return;
   }
 
-
   Serial.println("Ethernet ist bereit.");
 
+  // ----------------------------------------------------------
+  // HA device
+  // ----------------------------------------------------------
 
-  // ==========================================================
-  // Home Assistant Gerät
-  // ==========================================================
+  device.setName("ESP32-S3 Rollladen Controller");
+  device.setSoftwareVersion("1.0.0");
 
-  device.setName(
-    "ESP32-S3 Rollladen Controller"
-  );
+  statusSensor.setName("Status");
+  statusSensor.setIcon("mdi:lan-connect");
 
-  device.setSoftwareVersion(
-    "1.0.0"
-  );
+  setupCover(coverBuero);
+  setupCover(coverSchlafzimmer2);
+  setupCover(coverSchlafzimmer);
+  setupCover(coverGaestezimmer2);
+  setupCover(coverKueche1);
+  setupCover(coverKueche2);
+  setupCover(coverBad);
+  setupCover(coverSchlafzimmerRollo1);
+  setupCover(coverWz4);
+  setupCover(coverWohnzimmerTuer);
+  setupCover(coverWohnzimmer2);
+  setupCover(coverWohnzimmer3);
+  setupCover(coverSchlafzimmer1);
+  setupCover(coverWohnzimmer);
 
-
-  // ==========================================================
-  // Status Sensor
-  // ==========================================================
-
-  statusSensor.setName(
-    "Status"
-  );
-
-  statusSensor.setIcon(
-    "mdi:lan-connect"
-  );
-
-
-  // ==========================================================
-  // MQTT Callbacks
-  // ==========================================================
-
-  mqtt.onConnected(
-    onMqttConnected
-  );
-
-  mqtt.onDisconnected(
-    onMqttDisconnected
-  );
-
-  mqtt.onStateChanged(
-    onMqttStateChanged
-  );
-
-
-  // ==========================================================
+  // ----------------------------------------------------------
   // MQTT
-  // ==========================================================
+  // ----------------------------------------------------------
+
+  mqtt.onConnected(onMqttConnected);
+  mqtt.onDisconnected(onMqttDisconnected);
+  mqtt.onStateChanged(onMqttStateChanged);
 
   Serial.println();
   Serial.println("Starte MQTT...");
 
   Serial.print("Broker: ");
-  Serial.println(
-    config.mqttConfig.host
-  );
+  Serial.println(config.mqttConfig.host);
 
   Serial.print("Port: ");
-  Serial.println(
-    config.mqttConfig.port
-  );
+  Serial.println(config.mqttConfig.port);
 
   Serial.print("Benutzer: ");
-  Serial.println(
-    config.mqttConfig.username
-  );
-
+  Serial.println(config.mqttConfig.username);
 
   mqtt.begin(
     config.mqttConfig.host.c_str(),
@@ -401,44 +416,11 @@ void setup() {
 
   Serial.println("MQTT gestartet");
 
-
-  // ==========================================================
+  // ----------------------------------------------------------
   // CC1101
-  // ==========================================================
-
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("STARTE CC1101");
-  Serial.println("================================");
-
-  Serial.println("SPI:");
-  Serial.println("SCK  = GPIO18");
-  Serial.println("MISO = GPIO16");
-  Serial.println("MOSI = GPIO17");
-  Serial.println("CS   = GPIO21");
-  Serial.println("GDO0 = GPIO3");
-  Serial.println("GDO2 = GPIO2");
-
-
-  Serial.println();
-  Serial.println(
-    "Rufe shutterControl.setup() auf..."
-  );
+  // ----------------------------------------------------------
 
   shutterControl.setup();
-
-  Serial.println(
-    "shutterControl.setup() beendet."
-  );
-
-  Serial.println(
-    "CC1101 Setup beendet."
-  );
-
-
-  // ==========================================================
-  // Fertig
-  // ==========================================================
 
   Serial.println();
   Serial.println("================================");
@@ -446,47 +428,29 @@ void setup() {
   Serial.println("================================");
 }
 
-
 // ============================================================
 // LOOP
 // ============================================================
 
 void loop() {
 
-  // MQTT bearbeiten
   mqtt.loop();
-
-
-  // ==========================================================
-  // MQTT Status alle 2 Sekunden anzeigen
-  // ==========================================================
 
   static unsigned long lastMqttCheck = 0;
 
-  if (
-    millis() - lastMqttCheck >= 2000
-  ) {
+  if (millis() - lastMqttCheck >= 2000) {
 
     lastMqttCheck = millis();
 
     Serial.print("MQTT Status: ");
 
     if (mqtt.isConnected()) {
-
       Serial.println("VERBUNDEN");
-
-      statusSensor.setValue(
-        "online"
-      );
-
+      statusSensor.setValue("online");
     } else {
-
-      Serial.println(
-        "NICHT VERBUNDEN"
-      );
+      Serial.println("NICHT VERBUNDEN");
     }
   }
-
 
   delay(10);
 }
