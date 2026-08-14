@@ -7,9 +7,9 @@
 
 Config config;
 
-// ==============================
+// ============================================================
 // W5500
-// ==============================
+// ============================================================
 
 #define ETH_PHY_TYPE   ETH_PHY_W5500
 #define ETH_PHY_ADDR   1
@@ -22,9 +22,10 @@ Config config;
 #define ETH_SPI_MISO   12
 #define ETH_SPI_MOSI   11
 
-// ==============================
+
+// ============================================================
 // Netzwerk
-// ==============================
+// ============================================================
 
 IPAddress local_ip(192, 168, 188, 250);
 IPAddress gateway(192, 168, 188, 1);
@@ -33,9 +34,10 @@ IPAddress dns(192, 168, 188, 1);
 
 bool ethConnected = false;
 
-// ==============================
+
+// ============================================================
 // MQTT / Home Assistant
-// ==============================
+// ============================================================
 
 NetworkClient client;
 
@@ -44,32 +46,45 @@ byte mac[] = {
 };
 
 HADevice device(mac, sizeof(mac));
+
 HAMqtt mqtt(client, device);
 
 HASensor statusSensor("status");
 
-// ==============================
-// CC1101 / Shutter
-// ==============================
+
+// ============================================================
+// CC1101 / Rollladen
+// ============================================================
 
 ShutterControl shutterControl;
 
-// ==============================
-// Ethernet Events
-// ==============================
 
-void onNetworkEvent(arduino_event_id_t event, arduino_event_info_t info) {
+// ============================================================
+// Ethernet Events
+// ============================================================
+
+void onNetworkEvent(
+  arduino_event_id_t event,
+  arduino_event_info_t info
+) {
 
   switch (event) {
 
     case ARDUINO_EVENT_ETH_START:
+
       Serial.println("ETH gestartet");
+
       ETH.setHostname("esp32-s3-shutter");
+
       break;
 
+
     case ARDUINO_EVENT_ETH_CONNECTED:
+
       Serial.println("ETH verbunden");
+
       break;
+
 
     case ARDUINO_EVENT_ETH_GOT_IP:
 
@@ -85,31 +100,140 @@ void onNetworkEvent(arduino_event_id_t event, arduino_event_info_t info) {
       Serial.println(ETH.subnetMask());
 
       ethConnected = true;
+
       break;
+
 
     case ARDUINO_EVENT_ETH_LOST_IP:
+
       Serial.println("ETH IP verloren");
+
       ethConnected = false;
+
       break;
+
 
     case ARDUINO_EVENT_ETH_DISCONNECTED:
+
       Serial.println("ETH getrennt");
+
       ethConnected = false;
+
       break;
+
 
     case ARDUINO_EVENT_ETH_STOP:
+
       Serial.println("ETH gestoppt");
+
       ethConnected = false;
+
       break;
 
+
     default:
+
       break;
   }
 }
 
-// ==============================
-// Setup
-// ==============================
+
+// ============================================================
+// MQTT Connected Callback
+// ============================================================
+
+void onMqttConnected() {
+
+  Serial.println();
+  Serial.println("********************************");
+  Serial.println("MQTT: VERBUNDEN");
+  Serial.println("********************************");
+
+  statusSensor.setValue("online");
+}
+
+
+// ============================================================
+// MQTT Disconnected Callback
+// ============================================================
+
+void onMqttDisconnected() {
+
+  Serial.println();
+  Serial.println("********************************");
+  Serial.println("MQTT: GETRENNT");
+  Serial.println("********************************");
+
+  statusSensor.setValue("offline");
+}
+
+
+// ============================================================
+// MQTT State Callback
+// ============================================================
+
+void onMqttStateChanged(
+  HAMqtt::ConnectionState state
+) {
+
+  Serial.print("MQTT State: ");
+
+  switch (state) {
+
+    case HAMqtt::StateConnecting:
+      Serial.println("CONNECTING");
+      break;
+
+    case HAMqtt::StateConnectionTimeout:
+      Serial.println("CONNECTION TIMEOUT");
+      break;
+
+    case HAMqtt::StateConnectionLost:
+      Serial.println("CONNECTION LOST");
+      break;
+
+    case HAMqtt::StateConnectionFailed:
+      Serial.println("CONNECTION FAILED");
+      break;
+
+    case HAMqtt::StateDisconnected:
+      Serial.println("DISCONNECTED");
+      break;
+
+    case HAMqtt::StateConnected:
+      Serial.println("CONNECTED");
+      break;
+
+    case HAMqtt::StateBadProtocol:
+      Serial.println("BAD PROTOCOL");
+      break;
+
+    case HAMqtt::StateBadClientId:
+      Serial.println("BAD CLIENT ID");
+      break;
+
+    case HAMqtt::StateUnavailable:
+      Serial.println("UNAVAILABLE");
+      break;
+
+    case HAMqtt::StateBadCredentials:
+      Serial.println("BAD CREDENTIALS");
+      break;
+
+    case HAMqtt::StateUnauthorized:
+      Serial.println("UNAUTHORIZED");
+      break;
+
+    default:
+      Serial.println("UNKNOWN");
+      break;
+  }
+}
+
+
+// ============================================================
+// SETUP
+// ============================================================
 
 void setup() {
 
@@ -123,12 +247,14 @@ void setup() {
   Serial.println("Ethernet + MQTT + CC1101");
   Serial.println("================================");
 
-  // ==============================
-  // Ethernet starten
-  // ==============================
+
+  // ==========================================================
+  // Ethernet
+  // ==========================================================
 
   Network.onEvent(onNetworkEvent);
 
+  Serial.println();
   Serial.println("Starte W5500...");
 
   bool ethResult = ETH.begin(
@@ -144,53 +270,127 @@ void setup() {
   );
 
   Serial.print("ETH.begin(): ");
-  Serial.println(ethResult ? "OK" : "FEHLER");
 
-  // ==============================
-  // Statische IP
-  // ==============================
-
-  if (ETH.config(local_ip, gateway, subnet, dns)) {
-    Serial.println("Statische IP: OK");
+  if (ethResult) {
+    Serial.println("OK");
   } else {
+    Serial.println("FEHLER");
+  }
+
+
+  // ==========================================================
+  // Statische IP
+  // ==========================================================
+
+  if (ETH.config(
+        local_ip,
+        gateway,
+        subnet,
+        dns
+      )) {
+
+    Serial.println("Statische IP: OK");
+
+  } else {
+
     Serial.println("Statische IP: FEHLER");
   }
 
-  // ==============================
+
+  // ==========================================================
   // Auf Ethernet warten
-  // ==============================
+  // ==========================================================
 
   Serial.println("Warte auf Ethernet...");
 
   unsigned long start = millis();
 
-  while (!ethConnected && millis() - start < 15000) {
+  while (
+    !ethConnected &&
+    (millis() - start < 15000)
+  ) {
+
     delay(100);
   }
 
+
   if (!ethConnected) {
-    Serial.println("Ethernet nicht verbunden!");
+
+    Serial.println();
+    Serial.println("!!! ETHERNET NICHT VERBUNDEN !!!");
+
     return;
   }
 
+
   Serial.println("Ethernet ist bereit.");
 
-  // ==============================
-  // Home Assistant
-  // ==============================
 
-  device.setName("ESP32-S3 Rollladen Controller");
-  device.setSoftwareVersion("1.0.0");
+  // ==========================================================
+  // Home Assistant Gerät
+  // ==========================================================
 
-  statusSensor.setName("Status");
-  statusSensor.setIcon("mdi:lan-connect");
+  device.setName(
+    "ESP32-S3 Rollladen Controller"
+  );
 
-  // ==============================
+  device.setSoftwareVersion(
+    "1.0.0"
+  );
+
+
+  // ==========================================================
+  // Status Sensor
+  // ==========================================================
+
+  statusSensor.setName(
+    "Status"
+  );
+
+  statusSensor.setIcon(
+    "mdi:lan-connect"
+  );
+
+
+  // ==========================================================
+  // MQTT Callbacks
+  // ==========================================================
+
+  mqtt.onConnected(
+    onMqttConnected
+  );
+
+  mqtt.onDisconnected(
+    onMqttDisconnected
+  );
+
+  mqtt.onStateChanged(
+    onMqttStateChanged
+  );
+
+
+  // ==========================================================
   // MQTT
-  // ==============================
+  // ==========================================================
 
   Serial.println();
   Serial.println("Starte MQTT...");
+
+  Serial.print("Broker: ");
+  Serial.println(
+    config.mqttConfig.host
+  );
+
+  Serial.print("Port: ");
+  Serial.println(
+    config.mqttConfig.port
+  );
+
+  Serial.print("Benutzer: ");
+  Serial.println(
+    config.mqttConfig.username
+  );
+
 
   mqtt.begin(
     config.mqttConfig.host.c_str(),
@@ -201,9 +401,10 @@ void setup() {
 
   Serial.println("MQTT gestartet");
 
-  // ==============================
+
+  // ==========================================================
   // CC1101
-  // ==============================
+  // ==========================================================
 
   Serial.println();
   Serial.println("================================");
@@ -218,21 +419,26 @@ void setup() {
   Serial.println("GDO0 = GPIO3");
   Serial.println("GDO2 = GPIO2");
 
-  // Genau hier prüfen wir jetzt,
-  // ob setup() des CC1101 hängen bleibt.
 
   Serial.println();
-  Serial.println("Rufe shutterControl.setup() auf...");
+  Serial.println(
+    "Rufe shutterControl.setup() auf..."
+  );
 
   shutterControl.setup();
 
-  Serial.println("shutterControl.setup() beendet.");
+  Serial.println(
+    "shutterControl.setup() beendet."
+  );
 
-  Serial.println("CC1101 Setup beendet.");
+  Serial.println(
+    "CC1101 Setup beendet."
+  );
 
-  // ==============================
+
+  // ==========================================================
   // Fertig
-  // ==============================
+  // ==========================================================
 
   Serial.println();
   Serial.println("================================");
@@ -240,25 +446,47 @@ void setup() {
   Serial.println("================================");
 }
 
-// ==============================
-// Loop
-// ==============================
+
+// ============================================================
+// LOOP
+// ============================================================
 
 void loop() {
 
+  // MQTT bearbeiten
   mqtt.loop();
 
-  // Status regelmäßig veröffentlichen
-  static unsigned long lastStatus = 0;
 
-  if (millis() - lastStatus >= 5000) {
+  // ==========================================================
+  // MQTT Status alle 2 Sekunden anzeigen
+  // ==========================================================
 
-    lastStatus = millis();
+  static unsigned long lastMqttCheck = 0;
 
-    statusSensor.setValue("online");
+  if (
+    millis() - lastMqttCheck >= 2000
+  ) {
 
-    Serial.println("MQTT Status -> online");
+    lastMqttCheck = millis();
+
+    Serial.print("MQTT Status: ");
+
+    if (mqtt.isConnected()) {
+
+      Serial.println("VERBUNDEN");
+
+      statusSensor.setValue(
+        "online"
+      );
+
+    } else {
+
+      Serial.println(
+        "NICHT VERBUNDEN"
+      );
+    }
   }
+
 
   delay(10);
 }
