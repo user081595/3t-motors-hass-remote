@@ -53,6 +53,7 @@ class ShutterControl {
   
   public:
     void setup() {
+      ELECHOUSE_cc1101.setSpiPin(CC1101_SCK, CC1101_MISO, CC1101_MOSI, CC1101_CS);
       ELECHOUSE_cc1101.Init();
       ELECHOUSE_cc1101.setGDO(PIN_SEND, PIN_RECEIVE);
       ELECHOUSE_cc1101.setMHZ(433.92);
