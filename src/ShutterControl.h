@@ -15,7 +15,7 @@
 #define CC1101_SCK   18
 #define CC1101_MISO  16
 #define CC1101_MOSI  17
-#define CC1101_CS    21
+#define CC1101_CS    1
 
 static SPIClass cc1101SPI(FSPI);
 static SPISettings cc1101SPISettings(2000000, MSBFIRST, SPI_MODE0);
@@ -59,6 +59,12 @@ private:
   };
 
   static const CodeSet codes[];
+  static constexpr size_t CODE_COUNT = 14;
+
+  // Motor travel times used by the HomeKit/Home Assistant position logic.
+  // Index corresponds to ShutterId.
+  static const uint32_t openDurationMs[];
+  static const uint32_t closeDurationMs[];
 
   static uint32_t broadlinkUnitToUs(uint16_t unit) {
     return (uint32_t)((unit * 8192UL + 134) / 269UL);
@@ -83,13 +89,18 @@ private:
       return (uint8_t)((nibble(hex[pos]) << 4) | nibble(hex[pos + 1]));
     };
 
-    if (hexByte(0) != 0xB1 || hexByte(1) != 0xC0) {
-      Serial.println("CC1101: kein B1C0-RF-Code");
-      return false;
-    }
+    // Diagnose: die gelieferten Broadlink-Codes beginnen mit B1 C0.
+    // Wir prüfen das nur zur Information und brechen NICHT ab.
+    // So kann ein Header-/Parserproblem die eigentliche Sendung nicht blockieren.
+    Serial.print("RF Header: ");
+    Serial.printf("%02X%02X", hexByte(0), hexByte(2));
+    Serial.println();
 
     const uint16_t payloadLength =
-      (uint16_t)hexByte(2) | ((uint16_t)hexByte(3) << 8);
+      (uint16_t)hexByte(4) | ((uint16_t)hexByte(6) << 8);
+
+    Serial.print("Payload length: ");
+    Serial.println(payloadLength);
 
     if ((size_t)payloadLength + 4 > byteLen || byteLen < 10) {
       Serial.println("CC1101: ungültiges Broadlink-Längenfeld");
@@ -209,7 +220,7 @@ public:
 
   bool open(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
+        (int)id >= (int)CODE_COUNT) {
       return false;
     }
 
@@ -221,7 +232,7 @@ public:
 
   bool close(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
+        (int)id >= (int)CODE_COUNT) {
       return false;
     }
 
@@ -233,7 +244,7 @@ public:
 
   bool stop(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
+        (int)id >= (int)CODE_COUNT) {
       return false;
     }
 
@@ -243,9 +254,27 @@ public:
     return sendBroadlinkCode(codes[id].stop);
   }
 
+  uint32_t openDurationMsFor(ShutterId id) const {
+    return openDurationMs[(int)id];
+  }
+
+  uint32_t closeDurationMsFor(ShutterId id) const {
+    return closeDurationMs[(int)id];
+  }
+
   const char* name(ShutterId id) const {
     return codes[id].name;
   }
+};
+
+const uint32_t ShutterControl::openDurationMs[] = {
+  27000, 27000, 27000, 27000, 27000, 27000, 27000,
+  27000, 27000, 27000, 27000, 30000, 30000, 27000
+};
+
+const uint32_t ShutterControl::closeDurationMs[] = {
+  17000, 17000, 17000, 17000, 17000, 17000, 17000,
+  17000, 17000, 17000, 17000, 23000, 17000, 17000
 };
 
 // ============================================================
