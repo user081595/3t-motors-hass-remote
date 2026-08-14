@@ -23,18 +23,6 @@ Config config;
 #define ETH_SPI_MOSI   11
 
 // ==============================
-// CC1101
-// ==============================
-
-#define CC1101_SCK     18
-#define CC1101_MISO    16
-#define CC1101_MOSI    17
-#define CC1101_CS      21
-
-#define CC1101_GDO0     3
-#define CC1101_GDO2     2
-
-// ==============================
 // Netzwerk
 // ==============================
 
@@ -46,7 +34,7 @@ IPAddress dns(192, 168, 188, 1);
 bool ethConnected = false;
 
 // ==============================
-// MQTT
+// MQTT / Home Assistant
 // ==============================
 
 NetworkClient client;
@@ -59,6 +47,10 @@ HADevice device(mac, sizeof(mac));
 HAMqtt mqtt(client, device);
 
 HASensor statusSensor("status");
+
+// ==============================
+// CC1101 / Shutter
+// ==============================
 
 ShutterControl shutterControl;
 
@@ -105,6 +97,11 @@ void onNetworkEvent(arduino_event_id_t event, arduino_event_info_t info) {
       ethConnected = false;
       break;
 
+    case ARDUINO_EVENT_ETH_STOP:
+      Serial.println("ETH gestoppt");
+      ethConnected = false;
+      break;
+
     default:
       break;
   }
@@ -117,6 +114,7 @@ void onNetworkEvent(arduino_event_id_t event, arduino_event_info_t info) {
 void setup() {
 
   Serial.begin(115200);
+
   delay(3000);
 
   Serial.println();
@@ -126,7 +124,7 @@ void setup() {
   Serial.println("================================");
 
   // ==============================
-  // Ethernet
+  // Ethernet starten
   // ==============================
 
   Network.onEvent(onNetworkEvent);
@@ -148,11 +146,19 @@ void setup() {
   Serial.print("ETH.begin(): ");
   Serial.println(ethResult ? "OK" : "FEHLER");
 
+  // ==============================
+  // Statische IP
+  // ==============================
+
   if (ETH.config(local_ip, gateway, subnet, dns)) {
     Serial.println("Statische IP: OK");
   } else {
     Serial.println("Statische IP: FEHLER");
   }
+
+  // ==============================
+  // Auf Ethernet warten
+  // ==============================
 
   Serial.println("Warte auf Ethernet...");
 
@@ -209,16 +215,23 @@ void setup() {
   Serial.println("MISO = GPIO16");
   Serial.println("MOSI = GPIO17");
   Serial.println("CS   = GPIO21");
-
   Serial.println("GDO0 = GPIO3");
   Serial.println("GDO2 = GPIO2");
 
+  // Genau hier prüfen wir jetzt,
+  // ob setup() des CC1101 hängen bleibt.
+
+  Serial.println();
+  Serial.println("Rufe shutterControl.setup() auf...");
+
   shutterControl.setup();
+
+  Serial.println("shutterControl.setup() beendet.");
 
   Serial.println("CC1101 Setup beendet.");
 
   // ==============================
-  // Status
+  // Fertig
   // ==============================
 
   Serial.println();
@@ -235,6 +248,7 @@ void loop() {
 
   mqtt.loop();
 
+  // Status regelmäßig veröffentlichen
   static unsigned long lastStatus = 0;
 
   if (millis() - lastStatus >= 5000) {
