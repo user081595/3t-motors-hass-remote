@@ -220,7 +220,8 @@ void publishCoverDiscovery(size_t index) {
   snprintf(
     topic,
     sizeof(topic),
-    "homeassistant/cover/%s/config",
+    "homeassistant/cover/%s/%s/config",
+    MQTT_DEVICE_ID,
     COVER_TOPIC_IDS[index]
   );
 
