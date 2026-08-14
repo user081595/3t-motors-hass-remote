@@ -3,6 +3,7 @@
 #include <ETH.h>
 #include <Network.h>
 #include <config.h>
+Config config;
 
 // ==============================
 // W5500
