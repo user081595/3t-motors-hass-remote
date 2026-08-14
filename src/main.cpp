@@ -139,7 +139,7 @@ void setup() {
     ETH_PHY_CS,
     ETH_PHY_IRQ,
     ETH_PHY_RST,
-    SPI2_HOST,
+    SPI3_HOST,
     ETH_SPI_SCK,
     ETH_SPI_MISO,
     ETH_SPI_MOSI
