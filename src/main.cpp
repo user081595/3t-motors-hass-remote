@@ -3,6 +3,7 @@
 #include <ETH.h>
 #include <Network.h>
 #include <config.h>
+
 Config config;
 
 // ==============================
@@ -46,7 +47,6 @@ HAMqtt mqtt(client, device);
 
 HASensor statusSensor("status");
 
-
 // ==============================
 // Ethernet Events
 // ==============================
@@ -74,8 +74,10 @@ void onNetworkEvent(arduino_event_id_t event, arduino_event_info_t info) {
       Serial.print("Gateway: ");
       Serial.println(ETH.gatewayIP());
 
-      ethConnected = true;
+      Serial.print("Subnet: ");
+      Serial.println(ETH.subnetMask());
 
+      ethConnected = true;
       break;
 
     case ARDUINO_EVENT_ETH_LOST_IP:
@@ -98,7 +100,6 @@ void onNetworkEvent(arduino_event_id_t event, arduino_event_info_t info) {
   }
 }
 
-
 // ==============================
 // Setup
 // ==============================
@@ -115,9 +116,9 @@ void setup() {
   Serial.println("Ethernet + MQTT Test");
   Serial.println("================================");
 
-  // --------------------------------
+  // ==============================
   // Ethernet starten
-  // --------------------------------
+  // ==============================
 
   Network.onEvent(onNetworkEvent);
 
@@ -138,16 +139,19 @@ void setup() {
   Serial.print("ETH.begin(): ");
   Serial.println(ethResult ? "OK" : "FEHLER");
 
+  // ==============================
   // Statische IP
+  // ==============================
+
   if (ETH.config(local_ip, gateway, subnet, dns)) {
     Serial.println("Statische IP: OK");
   } else {
     Serial.println("Statische IP: FEHLER");
   }
 
-  // --------------------------------
-  // Warten bis Ethernet aktiv ist
-  // --------------------------------
+  // ==============================
+  // Auf Ethernet warten
+  // ==============================
 
   Serial.println("Warte auf Ethernet...");
 
@@ -164,9 +168,9 @@ void setup() {
 
   Serial.println("Ethernet ist bereit.");
 
-  // --------------------------------
+  // ==============================
   // Home Assistant Gerät
-  // --------------------------------
+  // ==============================
 
   device.setName("ESP32-S3 Rollladen Controller");
   device.setSoftwareVersion("1.0.0");
@@ -174,9 +178,9 @@ void setup() {
   statusSensor.setName("Status");
   statusSensor.setIcon("mdi:lan-connect");
 
-  // --------------------------------
+  // ==============================
   // MQTT
-  // --------------------------------
+  // ==============================
 
   Serial.println();
   Serial.println("Starte MQTT...");
@@ -190,14 +194,11 @@ void setup() {
 
   Serial.println("MQTT gestartet");
 
-  statusSensor.setValue("online");
-
   Serial.println();
   Serial.println("================================");
   Serial.println("SETUP FERTIG");
   Serial.println("================================");
 }
-
 
 // ==============================
 // Loop
@@ -205,7 +206,20 @@ void setup() {
 
 void loop() {
 
+  // MQTT-Verbindung bearbeiten
   mqtt.loop();
+
+  // Status regelmäßig veröffentlichen
+  static unsigned long lastStatus = 0;
+
+  if (millis() - lastStatus >= 5000) {
+
+    lastStatus = millis();
+
+    statusSensor.setValue("online");
+
+    Serial.println("MQTT Status -> online");
+  }
 
   delay(10);
 }
