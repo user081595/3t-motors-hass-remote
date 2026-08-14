@@ -148,7 +148,7 @@ void updateMovement(size_t index) {
 
 void updateAllMovements() {
   static uint32_t lastUpdate = 0;
-  if (millis() - lastUpdate < 500) return;
+  if (millis() - lastUpdate < 200) return;
   lastUpdate = millis();
 
   for (size_t i = 0; i < COVER_COUNT; i++) {
@@ -174,11 +174,12 @@ void startMovement(size_t index, bool opening) {
     ? shutterControl.openDurationMsFor(id)
     : shutterControl.closeDurationMsFor(id);
 
+  // Publish the starting position immediately.
+  // Do NOT publish StateOpening/StateClosing here: HomeKit can interpret
+  // those transient MQTT states as the final cover state. The position
+  // itself is updated continuously below and the final state is published
+  // only when the measured travel time has elapsed.
   cover->setPosition(startPosition, true);
-  cover->setState(
-    opening ? HACover::StateOpening : HACover::StateClosing,
-    true
-  );
 }
 
 // ============================================================
@@ -533,6 +534,7 @@ void setup() {
   Serial.println();
   Serial.println("================================");
   Serial.println("SETUP FERTIG");
+  Serial.println("Positionsberechnung: zeitbasiert (27s AUF / 17s ZU)");
   Serial.println("================================");
 }
 
