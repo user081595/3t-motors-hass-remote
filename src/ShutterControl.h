@@ -59,7 +59,6 @@ private:
   };
 
   static const CodeSet codes[];
-  static constexpr size_t CODE_COUNT = 14;
 
   static uint32_t broadlinkUnitToUs(uint16_t unit) {
     return (uint32_t)((unit * 8192UL + 134) / 269UL);
@@ -210,7 +209,7 @@ public:
 
   bool open(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)CODE_COUNT) {
+        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
       return false;
     }
 
@@ -222,7 +221,7 @@ public:
 
   bool close(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)CODE_COUNT) {
+        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
       return false;
     }
 
@@ -234,7 +233,7 @@ public:
 
   bool stop(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)CODE_COUNT) {
+        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
       return false;
     }
 
