@@ -3,6 +3,7 @@
 #include <ETH.h>
 #include <Network.h>
 #include <config.h>
+#include <ShutterControl.cpp>
 
 Config config;
 
@@ -22,6 +23,18 @@ Config config;
 #define ETH_SPI_MOSI   11
 
 // ==============================
+// CC1101
+// ==============================
+
+#define CC1101_SCK     18
+#define CC1101_MISO    16
+#define CC1101_MOSI    17
+#define CC1101_CS      21
+
+#define CC1101_GDO0     3
+#define CC1101_GDO2     2
+
+// ==============================
 // Netzwerk
 // ==============================
 
@@ -33,7 +46,7 @@ IPAddress dns(192, 168, 188, 1);
 bool ethConnected = false;
 
 // ==============================
-// Home Assistant / MQTT
+// MQTT
 // ==============================
 
 NetworkClient client;
@@ -46,6 +59,8 @@ HADevice device(mac, sizeof(mac));
 HAMqtt mqtt(client, device);
 
 HASensor statusSensor("status");
+
+ShutterControl shutterControl;
 
 // ==============================
 // Ethernet Events
@@ -90,11 +105,6 @@ void onNetworkEvent(arduino_event_id_t event, arduino_event_info_t info) {
       ethConnected = false;
       break;
 
-    case ARDUINO_EVENT_ETH_STOP:
-      Serial.println("ETH gestoppt");
-      ethConnected = false;
-      break;
-
     default:
       break;
   }
@@ -107,17 +117,16 @@ void onNetworkEvent(arduino_event_id_t event, arduino_event_info_t info) {
 void setup() {
 
   Serial.begin(115200);
-
   delay(3000);
 
   Serial.println();
   Serial.println("================================");
   Serial.println("ESP32-S3 ROLLLADEN CONTROLLER");
-  Serial.println("Ethernet + MQTT Test");
+  Serial.println("Ethernet + MQTT + CC1101");
   Serial.println("================================");
 
   // ==============================
-  // Ethernet starten
+  // Ethernet
   // ==============================
 
   Network.onEvent(onNetworkEvent);
@@ -139,19 +148,11 @@ void setup() {
   Serial.print("ETH.begin(): ");
   Serial.println(ethResult ? "OK" : "FEHLER");
 
-  // ==============================
-  // Statische IP
-  // ==============================
-
   if (ETH.config(local_ip, gateway, subnet, dns)) {
     Serial.println("Statische IP: OK");
   } else {
     Serial.println("Statische IP: FEHLER");
   }
-
-  // ==============================
-  // Auf Ethernet warten
-  // ==============================
 
   Serial.println("Warte auf Ethernet...");
 
@@ -169,7 +170,7 @@ void setup() {
   Serial.println("Ethernet ist bereit.");
 
   // ==============================
-  // Home Assistant Gerät
+  // Home Assistant
   // ==============================
 
   device.setName("ESP32-S3 Rollladen Controller");
@@ -194,6 +195,32 @@ void setup() {
 
   Serial.println("MQTT gestartet");
 
+  // ==============================
+  // CC1101
+  // ==============================
+
+  Serial.println();
+  Serial.println("================================");
+  Serial.println("STARTE CC1101");
+  Serial.println("================================");
+
+  Serial.println("SPI:");
+  Serial.println("SCK  = GPIO18");
+  Serial.println("MISO = GPIO16");
+  Serial.println("MOSI = GPIO17");
+  Serial.println("CS   = GPIO21");
+
+  Serial.println("GDO0 = GPIO3");
+  Serial.println("GDO2 = GPIO2");
+
+  shutterControl.setup();
+
+  Serial.println("CC1101 Setup beendet.");
+
+  // ==============================
+  // Status
+  // ==============================
+
   Serial.println();
   Serial.println("================================");
   Serial.println("SETUP FERTIG");
@@ -206,10 +233,8 @@ void setup() {
 
 void loop() {
 
-  // MQTT-Verbindung bearbeiten
   mqtt.loop();
 
-  // Status regelmäßig veröffentlichen
   static unsigned long lastStatus = 0;
 
   if (millis() - lastStatus >= 5000) {
