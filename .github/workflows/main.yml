@@ -31,9 +31,8 @@ jobs:
             --flash-mode qio \
             --flash-size 16MB \
             -o firmware-merged.bin \
-            0x0 .pio/build/waveshare-esp32-s3-eth/bootloader.bin \
+            0x1000 .pio/build/waveshare-esp32-s3-eth/bootloader.bin \
             0x8000 .pio/build/waveshare-esp32-s3-eth/partitions.bin \
-            0xe000 .pio/build/waveshare-esp32-s3-eth/boot_app0.bin \
             0x10000 .pio/build/waveshare-esp32-s3-eth/firmware.bin
 
       - name: Upload firmware
