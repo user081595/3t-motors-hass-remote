@@ -59,7 +59,6 @@ private:
   };
 
   static const CodeSet codes[];
-  static constexpr size_t CODE_COUNT = 14;
 
   // Fahrzeiten aus der bisherigen Homebridge/Broadlink-Konfiguration.
   // Index entspricht ShutterId.
@@ -95,7 +94,7 @@ private:
     }
 
     const uint16_t payloadLength =
-      (uint16_t)hexByte(2) | ((uint16_t)hexByte(3) << 8);
+      (uint16_t)hexByte(4) | ((uint16_t)hexByte(6) << 8);
 
     if ((size_t)payloadLength + 4 > byteLen || byteLen < 10) {
       Serial.println("CC1101: ungültiges Broadlink-Längenfeld");
@@ -216,7 +215,7 @@ public:
 
   bool open(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)CODE_COUNT) {
+        (int)id >= 14) {
       return false;
     }
 
@@ -228,7 +227,7 @@ public:
 
   bool close(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)CODE_COUNT) {
+        (int)id >= 14) {
       return false;
     }
 
@@ -240,7 +239,7 @@ public:
 
   bool stop(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)CODE_COUNT) {
+        (int)id >= 14) {
       return false;
     }
 
