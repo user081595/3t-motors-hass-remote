@@ -1,0 +1,28 @@
+name: Build ESP32 Firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build with PlatformIO
+        uses: n-a-n/platformio-action@v1
+        with:
+          project-dir: .
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-firmware
+          path: |
+            .pio/build/waveshare-esp32-s3-eth/firmware.bin
+            .pio/build/waveshare-esp32-s3-eth/firmware.elf
