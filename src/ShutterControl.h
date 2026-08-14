@@ -15,7 +15,7 @@
 #define CC1101_SCK   18
 #define CC1101_MISO  16
 #define CC1101_MOSI  17
-#define CC1101_CS    21
+#define CC1101_CS    1
 
 static SPIClass cc1101SPI(FSPI);
 static SPISettings cc1101SPISettings(2000000, MSBFIRST, SPI_MODE0);
@@ -59,6 +59,17 @@ private:
   };
 
   static const CodeSet codes[];
+  static constexpr size_t CODE_COUNT = 14;
+
+  // Fahrzeiten wie in der bisherigen Homebridge-Konfiguration.
+  static constexpr uint32_t OPEN_DURATIONS_MS[CODE_COUNT] = {
+    27000, 27000, 27000, 27000, 27000, 27000, 27000,
+    27000, 27000, 27000, 27000, 30000, 30000, 27000
+  };
+  static constexpr uint32_t CLOSE_DURATIONS_MS[CODE_COUNT] = {
+    17000, 17000, 17000, 17000, 17000, 17000, 17000,
+    17000, 17000, 17000, 17000, 23000, 17000, 17000
+  };
 
   static uint32_t broadlinkUnitToUs(uint16_t unit) {
     return (uint32_t)((unit * 8192UL + 134) / 269UL);
@@ -259,7 +270,7 @@ public:
 
   bool open(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
+        (int)id >= (int)CODE_COUNT) {
       return false;
     }
 
@@ -271,7 +282,7 @@ public:
 
   bool close(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
+        (int)id >= (int)CODE_COUNT) {
       return false;
     }
 
@@ -283,7 +294,7 @@ public:
 
   bool stop(ShutterId id) {
     if ((int)id < 0 ||
-        (int)id >= (int)(sizeof(codes) / sizeof(codes[0]))) {
+        (int)id >= (int)CODE_COUNT) {
       return false;
     }
 
@@ -291,6 +302,18 @@ public:
     Serial.println(codes[id].name);
 
     return sendBroadlinkCode(codes[id].stop);
+  }
+
+  uint32_t openDurationMsFor(ShutterId id) const {
+    int i = (int)id;
+    if (i < 0 || i >= (int)CODE_COUNT) return 27000;
+    return OPEN_DURATIONS_MS[i];
+  }
+
+  uint32_t closeDurationMsFor(ShutterId id) const {
+    int i = (int)id;
+    if (i < 0 || i >= (int)CODE_COUNT) return 17000;
+    return CLOSE_DURATIONS_MS[i];
   }
 
   const char* name(ShutterId id) const {
