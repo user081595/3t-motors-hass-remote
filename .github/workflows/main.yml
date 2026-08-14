@@ -21,6 +21,9 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
+      - name: Clean build
+        run: pio run -t clean
+
       - name: Build firmware
         run: pio run
 
