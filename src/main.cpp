@@ -8,23 +8,8 @@
 
 WiFiClient client;
 
-Config config {
-  .deviceId = "3T-Motors Remote", // this is the name the device will have
-  .wifiConfig = {
-    .ssid = "your-wifi-ssid",
-    .password = "your-wifi-pass",
-  },
-  .mqttConfig = {
-    .host = "192.168.x.x", // insert your mqtt config here
-    .port = 1883, // change port if required
-    .username = "your-mqtt-user", // insert your mqtt user and password. You can find them here: Settings -> Addons -> Mosquitto broker -> Settings -> Logins
-    .password = "your-mqtt-pass"
-  },
-  // insert new shutters here: id, name, code. Example:
-  .shutters = {
-    //{"shutter_living_room", "Living room", "45232323322345453245452323452345454523232345454545454545452345234"},
-  },
-};
+Config config;
+
 
 byte mac[] = {0xA5, 0x5C, 0xDB, 0xDF, 0x7B, 0x37}; // change your mac address
 HADevice device(mac, sizeof(mac));
