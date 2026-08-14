@@ -84,13 +84,18 @@ private:
       return (uint8_t)((nibble(hex[pos]) << 4) | nibble(hex[pos + 1]));
     };
 
-    if (hexByte(0) != 0xB1 || hexByte(1) != 0xC0) {
-      Serial.println("CC1101: kein B1C0-RF-Code");
-      return false;
-    }
+    // Diagnose: die gelieferten Broadlink-Codes beginnen mit B1 C0.
+    // Wir prüfen das nur zur Information und brechen NICHT ab.
+    // So kann ein Header-/Parserproblem die eigentliche Sendung nicht blockieren.
+    Serial.print("RF Header: ");
+    Serial.printf("%02X%02X", hexByte(0), hexByte(2));
+    Serial.println();
 
     const uint16_t payloadLength =
-      (uint16_t)hexByte(2) | ((uint16_t)hexByte(3) << 8);
+      (uint16_t)hexByte(4) | ((uint16_t)hexByte(6) << 8);
+
+    Serial.print("Payload length: ");
+    Serial.println(payloadLength);
 
     if ((size_t)payloadLength + 4 > byteLen || byteLen < 10) {
       Serial.println("CC1101: ungültiges Broadlink-Längenfeld");
