@@ -1,8 +1,10 @@
-#define ESP32 1
-
 #include <Arduino.h>
 #include <SPI.h>
-#include "ELECHOUSE_CC1101_SRC_DRV.h"
+#include <RadioLib.h>
+
+// ============================================================
+// CC1101 PINS
+// ============================================================
 
 #define PIN_RECEIVE 2
 #define PIN_SEND    3
@@ -11,6 +13,40 @@
 #define CC1101_MISO 16
 #define CC1101_MOSI 17
 #define CC1101_CS   21
+
+// ============================================================
+// Eigener SPI-Bus für CC1101
+// W5500 läuft separat auf SPI3_HOST
+// ============================================================
+
+SPIClass cc1101SPI(HSPI);
+
+SPISettings cc1101SPISettings(
+  2000000,
+  MSBFIRST,
+  SPI_MODE0
+);
+
+// RadioLib-Modul
+//
+// CS   = GPIO21
+// GDO0 = GPIO3
+// RST  = nicht vorhanden
+// GDO2 = GPIO2
+//
+CC1101 radio = new Module(
+  CC1101_CS,
+  PIN_SEND,
+  RADIOLIB_NC,
+  PIN_RECEIVE,
+  cc1101SPI,
+  cc1101SPISettings
+);
+
+
+// ============================================================
+// SHUTTER CONTROL
+// ============================================================
 
 class ShutterControl {
 
@@ -41,9 +77,9 @@ class ShutterControl {
     char commandStop[16]  = "523452345234523";
 
 
-    // ==========================================
+    // ========================================================
     // Befehl senden
-    // ==========================================
+    // ========================================================
 
     void sendCommand(char cmd[]) {
 
@@ -63,7 +99,6 @@ class ShutterControl {
         }
 
         int pulseDelay = 0;
-
         byte n = 0;
 
         for (int i = 0; i < cmdLength; i++) {
@@ -73,9 +108,7 @@ class ShutterControl {
           pulseDelay = cmdParts[i];
 
           if (pulseDelay < 0) {
-
             pulseDelay = -pulseDelay;
-
             n = 0;
           }
 
@@ -91,22 +124,21 @@ class ShutterControl {
 
   public:
 
-    // ==========================================
-    // CC1101 Setup
-    // ==========================================
+    // ========================================================
+    // CC1101 SETUP
+    // ========================================================
 
     void setup() {
 
       Serial.println();
-      Serial.println("----- CC1101 SETUP -----");
+      Serial.println("----- CC1101 RADIOLIB SETUP -----");
 
 
-      // ------------------------------------------
-      // GDO-Pins
-      // ------------------------------------------
+      // ------------------------------------------------------
+      // GDO Pins
+      // ------------------------------------------------------
 
       pinMode(PIN_SEND, OUTPUT);
-
       digitalWrite(PIN_SEND, LOW);
 
       pinMode(PIN_RECEIVE, INPUT);
@@ -114,155 +146,89 @@ class ShutterControl {
       Serial.println("GDO Pins OK");
 
 
-      // ------------------------------------------
-      // CC1101 SPI-Pins
-      // ------------------------------------------
+      // ------------------------------------------------------
+      // Eigenen SPI-Bus starten
+      // ------------------------------------------------------
 
-      Serial.println("Setze CC1101 SPI-Pins...");
+      Serial.println("Starte CC1101 SPI-Bus...");
 
-      ELECHOUSE_cc1101.setSpiPin(
+      cc1101SPI.begin(
         CC1101_SCK,
         CC1101_MISO,
         CC1101_MOSI,
         CC1101_CS
       );
 
-      Serial.println("setSpiPin() OK");
+      Serial.println("CC1101 SPI-Bus gestartet");
 
 
-      // ------------------------------------------
-      // CS vorbereiten
-      // ------------------------------------------
-
-      pinMode(CC1101_CS, OUTPUT);
-
-      digitalWrite(CC1101_CS, HIGH);
-
-      Serial.println("CS HIGH");
-
-
-      // ------------------------------------------
-      // Wichtig:
-      // Globalen Arduino-SPI-Bus vor Init
-      // sauber beenden.
-      //
-      // Der W5500 läuft auf SPI3_HOST.
-      // Der CC1101 verwendet den globalen
-      // Arduino SPI-Bus.
-      // ------------------------------------------
-
-      Serial.println("Beende globalen SPI-Bus...");
-
-      SPI.end();
-
-      delay(20);
-
-      Serial.println("SPI.end() OK");
-
-
-      // ------------------------------------------
+      // ------------------------------------------------------
       // CC1101 initialisieren
-      // ------------------------------------------
+      // ------------------------------------------------------
 
-      Serial.println("Starte CC1101 Init()...");
+      Serial.println("Starte RadioLib CC1101...");
 
-      ELECHOUSE_cc1101.Init();
-
-      Serial.println("CC1101 Init() beendet!");
-
-
-      // ------------------------------------------
-      // GDO
-      // ------------------------------------------
-
-      Serial.println("Setze GDO...");
-
-      ELECHOUSE_cc1101.setGDO(
-        PIN_SEND,
-        PIN_RECEIVE
+      int16_t state = radio.begin(
+        433.92,     // Frequenz MHz
+        4.8,        // zunächst normale RadioLib-Bitrate
+        5.0,        // Frequenzabweichung
+        135.0,      // RX-Bandbreite
+        10,         // Sendeleistung
+        16          // Preamble
       );
 
-      Serial.println("GDO gesetzt");
+      Serial.print("RadioLib Init Status: ");
+      Serial.println(state);
 
 
-      // ------------------------------------------
-      // Frequenz
-      // ------------------------------------------
-
-      Serial.println("Setze Frequenz 433.92 MHz...");
-
-      ELECHOUSE_cc1101.setMHZ(433.92);
-
-      Serial.println("Frequenz gesetzt");
-
-
-      // ------------------------------------------
-      // TX
-      // ------------------------------------------
-
-      Serial.println("Setze TX...");
-
-      ELECHOUSE_cc1101.SetTx();
-
-      Serial.println("TX gesetzt");
-
-
-      // ------------------------------------------
-      // Modulation
-      // ------------------------------------------
-
-      Serial.println("Setze Modulation...");
-
-      ELECHOUSE_cc1101.setModulation(2);
-
-      Serial.println("Modulation gesetzt");
-
-
-      // ------------------------------------------
-      // Datenrate
-      // ------------------------------------------
-
-      Serial.println("Setze Datenrate...");
-
-      ELECHOUSE_cc1101.setDRate(512);
-
-      Serial.println("Datenrate gesetzt");
-
-
-      // ------------------------------------------
-      // Packet Format
-      // ------------------------------------------
-
-      Serial.println("Setze Packet Format...");
-
-      ELECHOUSE_cc1101.setPktFormat(3);
-
-      Serial.println("Packet Format gesetzt");
-
-
-      // ------------------------------------------
-      // Verbindung prüfen
-      // ------------------------------------------
-
-      Serial.println("Prüfe CC1101 Verbindung...");
-
-      if (ELECHOUSE_cc1101.getCC1101()) {
+      if (state == RADIOLIB_ERR_NONE) {
 
         Serial.println("CC1101: GEFUNDEN");
 
       } else {
 
-        Serial.println("CC1101: NICHT GEFUNDEN");
+        Serial.print("CC1101 INIT FEHLER: ");
+        Serial.println(state);
+
+        Serial.println("CC1101 konnte nicht initialisiert werden.");
+
+        // Kein Reset / kein Endlos-Hängen.
+        // Das restliche Gerät darf weiterlaufen.
+        return;
       }
 
 
-      Serial.println("----- CC1101 SETUP ENDE -----");
+      // ------------------------------------------------------
+      // OOK aktivieren
+      // ------------------------------------------------------
+
+      Serial.println("Aktiviere OOK...");
+
+      state = radio.setOOK(true);
+
+      Serial.print("OOK Status: ");
+      Serial.println(state);
+
+
+      // ------------------------------------------------------
+      // Promiscuous Mode
+      // ------------------------------------------------------
+
+      Serial.println("Aktiviere Promiscuous Mode...");
+
+      state = radio.setPromiscuousMode(true);
+
+      Serial.print("Promiscuous Status: ");
+      Serial.println(state);
+
+
+      Serial.println("----- CC1101 RADIOLIB SETUP ENDE -----");
     }
 
 
-    // ==========================================
-    // Öffnen
-    // ==========================================
+    // ========================================================
+    // ÖFFNEN
+    // ========================================================
 
     void openShutter(char deviceId[66]) {
 
@@ -276,9 +242,9 @@ class ShutterControl {
     }
 
 
-    // ==========================================
-    // Schließen
-    // ==========================================
+    // ========================================================
+    // SCHLIESSEN
+    // ========================================================
 
     void closeShutter(char deviceId[66]) {
 
@@ -292,9 +258,9 @@ class ShutterControl {
     }
 
 
-    // ==========================================
-    // Stop
-    // ==========================================
+    // ========================================================
+    // STOP
+    // ========================================================
 
     void stopShutter(char deviceId[66]) {
 
