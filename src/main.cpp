@@ -3,7 +3,7 @@
 #include <ETH.h>
 #include <Network.h>
 #include <config.h>
-#include <ShutterControl.cpp>
+#include <ShutterControl.h>
 
 Config config;
 
