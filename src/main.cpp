@@ -233,6 +233,14 @@ void updatePositionMovement(size_t index) {
   cover->setPosition(position);
 }
 
+
+// Keep positions strictly inside the valid Home Assistant/HomeKit range.
+static int clampPosition(int position) {
+  if (position < 0) return 0;
+  if (position > 100) return 100;
+  return position;
+}
+
 void startPositionMovement(size_t index, int targetPosition) {
   if (index >= COVER_COUNT) return;
 
