@@ -21,7 +21,7 @@
 // EIGENER SPI-BUS FÜR CC1101
 // ============================================================
 
-static SPIClass cc1101SPI(HSPI);
+static SPIClass cc1101SPI(FSPI);
 
 static SPISettings cc1101SPISettings(
   2000000,
