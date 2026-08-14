@@ -111,7 +111,26 @@ private:
     // Broadlink stores 00 + 16-bit big-endian value.
     // 0005dc is the usual 1500-unit end gap.
 
-    int16_t state = radio.transmitDirectAsync();
+    // Make absolutely sure the CC1101 is idle before entering direct TX.
+    // A previous asynchronous direct transmission can leave the chip in TX
+    // state; the following SPI register write can then fail with -16.
+    int16_t state = radio.standby();
+    if (state != RADIOLIB_ERR_NONE) {
+      Serial.print("CC1101 standby VOR Direct-TX FEHLER: ");
+      Serial.println(state);
+      return false;
+    }
+
+    state = radio.packetMode();
+    if (state != RADIOLIB_ERR_NONE) {
+      Serial.print("CC1101 packetMode VOR Direct-TX FEHLER: ");
+      Serial.println(state);
+      return false;
+    }
+
+    delay(2);
+
+    state = radio.transmitDirectAsync();
 
     if (state != RADIOLIB_ERR_NONE) {
       Serial.print("CC1101 TX Start Fehler: ");
@@ -156,10 +175,26 @@ private:
     }
 
     digitalWrite(CC1101_DATA, LOW);
-    delayMicroseconds(200);
 
-    // Leave direct mode before anything else uses the CC1101.
-    radio.packetMode();
+    // Stop asynchronous direct TX first. Do this BEFORE packetMode(), so
+    // the CC1101 is no longer transmitting while its packet registers are
+    // restored. This is the important fix for the recurring -16 error.
+    int16_t endState = radio.standby();
+    if (endState != RADIOLIB_ERR_NONE) {
+      Serial.print("CC1101 standby NACH Direct-TX FEHLER: ");
+      Serial.println(endState);
+      return false;
+    }
+
+    endState = radio.packetMode();
+    if (endState != RADIOLIB_ERR_NONE) {
+      Serial.print("CC1101 packetMode NACH Direct-TX FEHLER: ");
+      Serial.println(endState);
+      return false;
+    }
+
+    pinMode(CC1101_DATA, INPUT);
+    delayMicroseconds(200);
 
     return true;
   }
