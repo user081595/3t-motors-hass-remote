@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <SPI.h>
 #include <Ethernet.h>
 
@@ -10,13 +11,19 @@ byte mac[] = {
   0xA5, 0x5C, 0xDB, 0xDF, 0x7B, 0x37
 };
 
+// Test-IP
+IPAddress ip(192, 168, 188, 250);
+IPAddress dns(192, 168, 188, 1);
+IPAddress gateway(192, 168, 188, 1);
+IPAddress subnet(255, 255, 255, 0);
+
 void setup() {
   Serial.begin(115200);
   delay(3000);
 
   Serial.println();
   Serial.println("==============================");
-  Serial.println("WAVESHARE ETHERNET TEST");
+  Serial.println("WAVESHARE ETHERNET STATIC TEST");
   Serial.println("==============================");
 
   SPI.begin(
@@ -28,7 +35,11 @@ void setup() {
 
   Ethernet.init(W5500_CS);
 
-  Serial.println("W5500 wird gestartet...");
+  Serial.println("Starte W5500 mit statischer IP...");
+
+  Ethernet.begin(mac, ip, dns, gateway, subnet);
+
+  delay(1000);
 
   Serial.print("Hardware: ");
 
@@ -38,31 +49,6 @@ void setup() {
     Serial.println("W5500 NICHT GEFUNDEN");
   }
 
-  Serial.print("LAN-Link: ");
-
-  if (Ethernet.linkStatus() == LinkON) {
-    Serial.println("ON");
-  } else if (Ethernet.linkStatus() == LinkOFF) {
-    Serial.println("OFF");
-  } else {
-    Serial.println("UNKNOWN");
-  }
-
-  Serial.println("Starte DHCP...");
-
-  int result = Ethernet.begin(mac);
-
-  if (result == 0) {
-    Serial.println("DHCP fehlgeschlagen!");
-  } else {
-    Serial.println("DHCP erfolgreich!");
-  }
-
-  Serial.print("IP: ");
-  Serial.println(Ethernet.localIP());
-}
-
-void loop() {
   Serial.print("Link: ");
 
   if (Ethernet.linkStatus() == LinkON) {
@@ -70,6 +56,27 @@ void loop() {
   } else {
     Serial.println("OFF");
   }
+
+  Serial.print("IP-Adresse: ");
+  Serial.println(Ethernet.localIP());
+
+  Serial.print("Gateway: ");
+  Serial.println(Ethernet.gatewayIP());
+
+  Serial.println("Test beendet.");
+}
+
+void loop() {
+  Serial.print("Link: ");
+
+  if (Ethernet.linkStatus() == LinkON) {
+    Serial.print("ON  ");
+  } else {
+    Serial.print("OFF ");
+  }
+
+  Serial.print("IP: ");
+  Serial.println(Ethernet.localIP());
 
   delay(2000);
 }
