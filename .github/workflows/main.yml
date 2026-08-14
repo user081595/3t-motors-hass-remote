@@ -27,13 +27,21 @@ jobs:
       - name: Merge firmware
         run: |
           python -m pip install esptool
+
+          BOOT_APP0=$(find ~/.platformio -name boot_app0.bin | head -n 1)
+
+          echo "Using boot_app0:"
+          echo "$BOOT_APP0"
+
           python -m esptool --chip esp32s3 merge-bin \
-            --flash-mode qio \
-            --flash-size 16MB \
+            --pad-to-size 16MB \
+            --flash-mode keep \
+            --flash-freq keep \
+            --flash-size keep \
             -o firmware-merged.bin \
             0x0 .pio/build/waveshare-esp32-s3-eth/bootloader.bin \
             0x8000 .pio/build/waveshare-esp32-s3-eth/partitions.bin \
-            0xe000 ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+            0xe000 "$BOOT_APP0" \
             0x10000 .pio/build/waveshare-esp32-s3-eth/firmware.bin
 
       - name: Upload firmware
