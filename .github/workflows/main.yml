@@ -27,8 +27,7 @@ jobs:
       - name: Merge firmware
         run: |
           python -m pip install esptool
-          python -m esptool merge-bin \
-            --chip esp32s3 \
+          python -m esptool --chip esp32s3 merge-bin \
             --flash-mode qio \
             --flash-size 16MB \
             -o firmware-merged.bin \
