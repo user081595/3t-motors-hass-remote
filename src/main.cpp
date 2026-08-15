@@ -158,9 +158,12 @@ void updateMovement(size_t index) {
 
   const int newPosition = clampPosition((int)(position + 0.5f));
   knownPositions[index] = newPosition;
-  // Do NOT call cover->setPosition() while a target-position move is active.
-  // Home Assistant/HomeKit treats this as the requested position and would
-  // move the slider back to the current motor position on every update.
+
+  // The cover position is the CURRENT physical position. During a target
+  // movement it must therefore move 40 -> 41 -> 42 ... -> 80.
+  // We deliberately do not use optimistic mode: the target is only the
+  // command, while this value represents where the shutter actually is.
+  cover->setPosition(newPosition);
 }
 
 void updateAllMovements() {
@@ -238,9 +241,11 @@ void startMovement(size_t index, bool opening, int targetPosition = -1, bool sto
 
   knownPositions[index] = startPosition;
 
-  // For a target-position move, deliberately do not publish startPosition.
-  // Home Assistant/HomeKit has already accepted the requested target and
-  // must keep the slider there while the motor is travelling.
+  // Publish the actual CURRENT position, not the requested target.
+  // The slider therefore starts at the real position and then follows
+  // the shutter: 40 -> 41 -> 42 ... -> 80.
+  cover->setPosition(startPosition, true);
+
   // For normal OPEN/CLOSE keep the original ArduinoHA state behavior.
   // For a percentage target, don't publish Opening/Closing because that
   // makes HomeKit jump immediately to 0/100.
@@ -581,7 +586,7 @@ void setupCover(
   // Keep the requested target position in the UI while the motor moves.
   // The firmware estimates the physical position internally, but must not
   // feed that intermediate value back into the Home Assistant/HomeKit slider.
-  cover.setOptimistic(true);
+  cover.setOptimistic(false);
 
   cover.onCommand(onCoverCommand);
 }
