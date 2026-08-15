@@ -158,7 +158,9 @@ void updateMovement(size_t index) {
 
   const int newPosition = clampPosition((int)(position + 0.5f));
   knownPositions[index] = newPosition;
-  cover->setPosition(newPosition);
+  // Do NOT call cover->setPosition() while a target-position move is active.
+  // Home Assistant/HomeKit treats this as the requested position and would
+  // move the slider back to the current motor position on every update.
 }
 
 void updateAllMovements() {
@@ -235,8 +237,10 @@ void startMovement(size_t index, bool opening, int targetPosition = -1, bool sto
   }
 
   knownPositions[index] = startPosition;
-  cover->setPosition(startPosition, true);
 
+  // For a target-position move, deliberately do not publish startPosition.
+  // Home Assistant/HomeKit has already accepted the requested target and
+  // must keep the slider there while the motor is travelling.
   // For normal OPEN/CLOSE keep the original ArduinoHA state behavior.
   // For a percentage target, don't publish Opening/Closing because that
   // makes HomeKit jump immediately to 0/100.
@@ -308,7 +312,8 @@ void publishPositionDiscovery(size_t index) {
       "\"stat_closing\":\"closing\", "
       "\"stat_stopped\":\"stopped\", "
       "\"pos_open\":100,"
-      "\"pos_clsd\":0"
+      "\"pos_clsd\":0,"
+      "\"optimistic\":true"
     "}",
     POSITION_MQTT_BASE,
     POSITION_COVER_IDS[index],
@@ -573,9 +578,10 @@ void setupCover(
   cover.setDeviceClass("shutter");
   cover.setIcon(icon);
 
-  // Position is estimated from the known motor travel time.
-  // We publish the state/position ourselves, so optimistic mode is disabled.
-  cover.setOptimistic(false);
+  // Keep the requested target position in the UI while the motor moves.
+  // The firmware estimates the physical position internally, but must not
+  // feed that intermediate value back into the Home Assistant/HomeKit slider.
+  cover.setOptimistic(true);
 
   cover.onCommand(onCoverCommand);
 }
